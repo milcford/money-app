@@ -56,7 +56,7 @@ const MRE='(январ[яь]|феврал[яь]|марта?|апрел[яь]|м�
 const pad=n=>String(n).padStart(2,'0');
 const isoDay=d=>`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
 // amount: optional sign (various minus chars), digits with spaces as thousands, optional decimals, currency ₽ (OCR: Р, P, р, руб, 2 after space)
-const AMT=/([−\-–—‒+])?\s*(\d{1,3}(?:[ \u00a0\u202f]\d{3})*(?:[.,]\d{1,2})?)\s*(?:₽|руб\.?|[РPр])\s*$/;
+const AMT=/([−\-–—‒+])?\s*(\d+(?:[ \u00a0\u202f]\d{3})*(?:[.,]\d{1,2})?)\s*(?:₽|руб\.?|[РPр])\s*$/;
 function parseHeader(line,today){
   const l=line.trim().toLowerCase();
   if(/^сегодня(?![а-яё])/.test(l))return isoDay(today);
@@ -68,15 +68,19 @@ function parseHeader(line,today){
   return null;}
 function cleanLine(s){return s.replace(/[|©®@>›»]+/g,' ').replace(/\s+/g,' ').trim();}
 function parseScreenshotText(text,today=new Date()){
-  const ops=[];let date=null,pendingDesc='';
+  const ops=[];let date=null,pendingDesc='',afterHdr=false;
   for(let raw of String(text).split(/\r?\n/)){
     const line=cleanLine(raw); if(!line)continue;
-    const h=parseHeader(line,today); if(h){date=h;pendingDesc='';continue;}
+    const h=parseHeader(line,today); if(h){date=h;pendingDesc='';afterHdr=true;continue;}
     if(/^(операции|все операции|расходы|доходы|поиск|недавние|главная|платежи|чат|ещё|еще)$/i.test(line))continue;
-    const m=line.match(AMT);
+    const m=line.match(AMT);const was=afterHdr;afterHdr=false;
+    // day total printed next to the day header (OCR often puts it on its own line): skip it
+    if(m&&was&&!line.slice(0,m.index).replace(/[\s—–−‒-]+/g,'')&&!pendingDesc)continue;
     if(m){const desc=line.slice(0,m.index).replace(/[\s—–−‒-]+$/,'').trim()||pendingDesc;
       let v=parseFloat(m[2].replace(/[ \u00a0\u202f]/g,'').replace(',','.')); if(m[1]!=='+')v=-v; // T-Bank: income is "+", everything else is spending
       ops.push({date:(date||isoDay(today))+'T00:00:00',amount:v,desc:desc||'Без описания',bankCategory:'',card:'',src:'screenshot'});pendingDesc='';continue;}
+    // summary cards at the top ("1 265 ₽ / Траты"): drop the amount we just took for an op
+    if(/^(траты|пополнения|нет (трат|пополнени).*)$/i.test(line)){const l=ops[ops.length-1];if(l&&l.desc==='Без описания'&&l._fresh!==false)ops.pop();continue;}
     // text line: category under the previous op, or a merchant name whose amount is on the next line
     const last=ops[ops.length-1];
     if(last&&!last.bankCategory&&!pendingDesc&&last._fresh!==false){last.bankCategory=line;last._fresh=false;}
