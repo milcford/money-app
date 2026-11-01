@@ -288,19 +288,43 @@ function parseJetlend(rows){const hi=rows.findIndex(r=>(r||[]).some(c=>String(c)
   const h=rows[hi].map(c=>String(c||'').trim());const ix=n=>h.indexOf(n);const I={d:h.findIndex(c=>/^дата/i.test(c)),op:ix('Тип операции'),in:ix('Приход'),out:ix('Расход'),rev:ix('Доход после удержания')};if(I.rev<0)I.rev=ix('Доход');
   // two exports exist: "операции" (Приход/Расход/Доход после удержания) and "доходы" (ID/Дата/Эмитент/ИНН/Доход/Тип операции)
   if(I.d<0||(I.in<0&&I.rev<0))return {errors:['Не нашёл в файле JetLend колонки «Дата» и «Приход/Расход» или «Доход»']};
-  const n=v=>typeof v==='number'?v:(num(String(v||''))||0);const deposits=[],monthly={},seen={};
+  const n=v=>typeof v==='number'?v:(num(String(v||''))||0);const deposits=[],monthly={},seen={},monthTo={};
   for(const r of rows.slice(hi+1)){if(!r)continue;const date=jlDate(r[I.d]);const op=String(r[I.op]||'').trim();if(!date||!op)continue;
     if(I.in>=0&&/^(пополнение сч[её]та|вывод (средств|со сч[её]та))$/i.test(op)){const a=Math.round((n(r[I.in])-n(r[I.out]))*100)/100;if(!a)continue;
       const base=['jl',date,a.toFixed(2)].join('|');seen[base]=(seen[base]||0)+1;deposits.push({date,amount:a,op,bankId:'jl:'+hash(base+'#'+seen[base])});continue;}
-    if(/переуступк/i.test(op)||I.rev<0)continue;const m=date.slice(0,7);monthly[m]=Math.round(((monthly[m]||0)+n(r[I.rev]))*100)/100;}
-  return {deposits,monthly,errors:[]};}
+    if(/переуступк/i.test(op)||I.rev<0)continue;const m=date.slice(0,7);if(!(monthTo[m]>date.slice(0,10)))monthTo[m]=date.slice(0,10);monthly[m]=Math.round(((monthly[m]||0)+n(r[I.rev]))*100)/100;}
+  return {deposits,monthly,monthTo,errors:[]};}
 // plan against existing ops: deposits link to card->Jetlend transfers (±3 days, same amount), month yield = one op per month (id jl:m:YYYY-MM, updated on re-import)
 function planJetlend(p,existing,jl){const known=new Set();existing.forEach(o=>(o.bankIds||[]).forEach(b=>known.add(b)));const used=new Set(),items=[];
   for(const d of p.deposits){if(known.has(d.bankId)){items.push({kind:'dup',d});continue;}const abs=Math.abs(d.amount);
     const t=existing.find(o=>!used.has(o.id)&&o.type==='transfer'&&(d.amount>0?o.toAccountId===jl:o.accountId===jl)&&Math.abs(o.amount-abs)<0.005&&days(o.date.slice(0,10),d.date.slice(0,10))<=3);
     if(t){used.add(t.id);items.push({kind:'link',d,target:t.id});}else items.push({kind:'add',d});}
-  for(const m of Object.keys(p.monthly).sort()){const v=p.monthly[m];const ex=existing.find(o=>(o.bankIds||[]).includes('jl:m:'+m));
-    if(ex){if(Math.abs((ex.type==='income'?ex.amount:-ex.amount)-v)>=0.005)items.push({kind:'yield',m,v,target:ex.id});}else if(Math.abs(v)>=0.005)items.push({kind:'yield',m,v});}
+  const dly={};existing.forEach(o=>!o.deleted&&(o.bankIds||[]).forEach(b=>{const d=b.match(/^jl:d:(\d{4}-\d{2})-\d{2}$/);if(d)dly[d[1]]=(dly[d[1]]||0)+(o.type==='income'?o.amount:-o.amount);}));
+  for(const m of Object.keys(p.monthly).sort()){const v=Math.round((p.monthly[m]-(dly[m]||0))*100)/100;const to=(p.monthTo||{})[m];const ex=existing.find(o=>(o.bankIds||[]).includes('jl:m:'+m));
+    if(ex){if(Math.abs((ex.type==='income'?ex.amount:-ex.amount)-v)>=0.005)items.push({kind:'yield',m,v,to,target:ex.id});}else if(Math.abs(v)>=0.005)items.push({kind:'yield',m,v,to});}
+  return items;}
+// ---------- JetLend screenshot (OCR text) -> daily interest income ----------
+// tolerant: date headers ("30 октября", "30.10.2025", "Сегодня"/"Вчера") set the day; "Платеж по займу ... 4,08 ₽" lines are summed per day;
+// a summary line ("доход за день", "начислено сегодня", "доход сегодня") wins over the sum for its day
+function parseJetlendShot(text,today=new Date()){const z=x=>String(x).padStart(2,'0'),iso=d=>`${d.getFullYear()}-${z(d.getMonth()+1)}-${z(d.getDate())}`;
+  const td=iso(today),yd=iso(new Date(today.getFullYear(),today.getMonth(),today.getDate()-1));let cur=null,pend=false;const lines=[],pay={},sum={};
+  const dateOf=l=>{let m=l.match(/\b(\d{1,2})\.(\d{1,2})(?:\.(\d{2,4}))?\b(?![.,]\d)/);if(m&&+m[2]<=12&&+m[1]<=31){let y=m[3]?(+m[3]<100?2000+ +m[3]:+m[3]):today.getFullYear();let d=`${y}-${z(m[2])}-${z(m[1])}`;if(!m[3]&&d>td)d=`${y-1}-${z(m[2])}-${z(m[1])}`;return d;}
+    m=l.toLowerCase().match(/\b(\d{1,2})\s+([а-яё]+)(?:\s+(\d{4}))?/);if(m){const mi=MONTHS.findIndex(p=>m[2].startsWith(p)&&(p!=='ма'||/^ма[яй]/.test(m[2])));if(mi>=0&&+m[1]<=31){let y=+m[3]||today.getFullYear();let d=`${y}-${z(mi+1)}-${z(m[1])}`;if(!m[3]&&d>td)d=`${y-1}-${z(mi+1)}-${z(m[1])}`;return d;}}
+    if(/сегодня/i.test(l))return td;if(/вчера/i.test(l))return yd;return null;};
+  const amtOf=l=>{const m=[...l.replace(/(\d)\s(?=\d{3}\b)/g,'$1').matchAll(/([+\-−–]?)\s?(\d+(?:[.,]\d{1,2})?)\s*(?:₽|р\b|руб|Р\b|P\b|8\b(?=\s*$))/g)];if(!m.length)return null;const x=m[m.length-1];const v=num(x[2]);return v==null?null:(/[\-−–]/.test(x[1])?-v:v);};
+  for(const raw of String(text||'').split(/\n/)){const l=raw.trim();if(!l)continue;const d=dateOf(l),a=amtOf(l);let kind='other';
+    if(/до[хx]од\s*(за\s*день|сегодня|за\s*сутки)|начислено|за\s*день/i.test(l)&&a!=null){kind='summary';const day=d||cur||td;sum[day]=Math.round(((sum[day]||0)+a)*100)/100;}
+    else if(/плат[её]ж|погашен|процент|бонус/i.test(l)&&a!=null){kind='pay';const day=d||cur||td;pay[day]=Math.round(((pay[day]||0)+a)*100)/100;}
+    else if(d&&a==null){kind='date';cur=d;}
+    else if(a!=null&&(pend||/^[+]/.test(l))){kind='pay';cur=cur||td;pay[cur]=Math.round(((pay[cur]||0)+a)*100)/100;}
+    pend=a==null&&/плат[её]ж|бонус/i.test(l);lines.push({text:l,kind,date:kind==='pay'||kind==='summary'?(d||cur||td):d,amount:a});}
+  const days={};Object.keys(pay).forEach(d=>days[d]={v:pay[d],src:'pay'});Object.keys(sum).forEach(d=>days[d]={v:sum[d],src:'summary'});return {lines,days};}
+// plan daily records 'jl:d:YYYY-MM-DD' vs existing (daily -> update if larger amount seen; month from XLSX covering the day -> unchecked "already counted")
+function planJetlendDays(days,existing,jl){const items=[];const live=existing.filter(o=>!o.deleted);
+  for(const d of Object.keys(days).sort()){const v=days[d].v;const ex=live.find(o=>(o.bankIds||[]).includes('jl:d:'+d));
+    const mo=live.find(o=>(o.bankIds||[]).includes('jl:m:'+d.slice(0,7)));const covered=mo&&(!mo.jlTo||d<=mo.jlTo);
+    if(ex){const cur=ex.type==='income'?ex.amount:-ex.amount;if(Math.abs(cur-v)>=0.005)items.push({d,v,src:days[d].src,target:ex.id,old:cur,accept:Math.abs(v)>Math.abs(cur)});continue;}
+    items.push({d,v,src:days[d].src,covered:!!covered,accept:!covered&&Math.abs(v)>=0.005});}
   return items;}
 function parseYandexText(lines){const D=/(\d{2})\.(\d{2})\.(\d{4})/,AM=/([+\-−–]?)\s?(\d{1,3}(?:[ \u00a0\u202f]\d{3})*[.,]\d{2})\s*(?:₽|RUB|руб)/g;
   const END=/^(исходящий\s+остаток|всего\s+(расход|приход)|с уважением)/i;
@@ -327,6 +351,6 @@ function parseYandexText(lines){const D=/(\d{2})\.(\d{2})\.(\d{4})/,AM=/([+\-−
     const t=l.match(/^в (\d{2}):(\d{2})$/);if(t){cur.date=cur.date.slice(0,11)+t[1]+':'+t[2]+':00';continue;}
     cur.desc+=' '+l;}
   flush();return {ops,skipped:0,errors:ops.length?[]:['Не удалось найти операции в выписке Яндекс Банка'],closing,totIn,totOut};}
-root.Core={JL,jlDate,parseJetlend,planJetlend,moveOp,opCmp,shotTimes,cleanYandexDesc,parseYandexText,ownToTransfer,OWN,suggestCoinKeeper,guessBankAccount,bankKind,parseCoinKeeper,planCoinKeeper,decideOp,parseScreenshotText,screenshotIds,similar,decode,parseTBank,reconcile,balances,hash,isCash};
+root.Core={parseJetlendShot,planJetlendDays,JL,jlDate,parseJetlend,planJetlend,moveOp,opCmp,shotTimes,cleanYandexDesc,parseYandexText,ownToTransfer,OWN,suggestCoinKeeper,guessBankAccount,bankKind,parseCoinKeeper,planCoinKeeper,decideOp,parseScreenshotText,screenshotIds,similar,decode,parseTBank,reconcile,balances,hash,isCash};
 if(typeof module!=='undefined')module.exports=root.Core;
 })(typeof self!=='undefined'?self:globalThis);
