@@ -54,7 +54,7 @@ async function syncLogout(){try{await api('/api/logout',{},localStorage.syncToke
 // ---- helpers ----
 const $=s=>document.querySelector(s),V=$('#view');
 const fmt=n=>(Math.round((n||0)*100)/100).toLocaleString('ru-RU',{maximumFractionDigits:2})+' ₽';
-const accName=id=>(S.accounts.find(a=>a.id===id)||{}).name||'?';
+const accName=id=>(S.accounts.find(a=>a.id===id)||S.accounts.map(a=>blackFor(a.id)).find(b=>b&&b.id===id)||{}).name||'?';
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const today=()=>new Date(Date.now()-new Date().getTimezoneOffset()*6e4).toISOString().slice(0,10);
 const month=()=>today().slice(0,7);
@@ -72,6 +72,15 @@ function setPer(p){PER=p;localStorage.per=p;refreshView();}
 function perStep(d){setPer(shiftM(PER||month(),d));}
 function refreshView(){header();if(views[cur])views[cur](window._arg);}
 function perBar(){return `<div class="perbar"><button onclick="perStep(-1)">◀</button><span onclick="setPer(PER?'':month())">${esc(perLabel(PER))}</span><button onclick="perStep(1)">▶</button></div>`;}
+// Tinkoff Black wallet paired with a card wallet (fixed ids so devices don't duplicate)
+function blackFor(cardId){const c=S.accounts.find(a=>a.id===cardId);if(!c||/black/i.test(c.name))return null;
+  const id=cardId==='mama_t'?'mama_black':cardId==='anya_t'?'anya_black':cardId+'_black';
+  return S.accounts.find(a=>a.id===id)||{id,name:c.name.split(/\s+/)[0]+' Black',kind:'card',icon:'🖤',color:'#222',initial:0,cardMask:'',order:50,_new:1};}
+async function ensureAcc(a){if(a&&a._new){delete a._new;await put('accounts',a);S.accounts=await all('accounts');}return a&&a.id;}
+const ownOps=()=>S.ops.filter(o=>(o.type==='income'||o.type==='expense')&&Core.OWN.test(o.note||'')&&blackFor(o.accountId));
+async function migrateOwn(){const xs=ownOps();if(!xs.length)return;if(!confirm('Перенести '+xs.length+' операций «между своими счетами» в переводы с/на Black?'))return;
+  for(const o of xs){const b=await ensureAcc(blackFor(o.accountId));await put('ops',Core.ownToTransfer(o,b));}
+  S.ops=await all('ops');toast('Перенесено: '+xs.length);refresh();show('import');}
 function opMatch(k,id){if(k==='inc'){const n=itemOf('inc',id).name;return o=>o.type==='income'&&o.category===n;}
   if(k==='exp'){const n=itemOf('exp',id).name;return o=>o.type==='expense'&&o.category===n;}
   return o=>o.accountId===id||o.toAccountId===id;}
@@ -110,6 +119,7 @@ import(){V.innerHTML=`<div class="hdr"><h2>Импорт <span class="mut" style=
   <div class="card"><b>1. Выписка Т‑Банка (CSV)</b><p class="mut">В приложении Т‑Банка: Счёт → Выписка → CSV. Повторная или пересекающаяся выписка дублей не создаст. <b>Это добавляет операции банка в приложение.</b> Для переноса из CoinKeeper используйте блок 3, а не этот.</p>${(()=>{const n=S.ops.filter(o=>(o.bankIds||[]).some(b=>!String(b).startsWith('ck:'))&&!(o.bankIds||[]).some(b=>String(b).startsWith('ck:'))).length;return n?`<div class="mut">Сейчас в приложении операций из выписок: ${n}. <button class="b s" onclick="delBankOps()">Удалить их</button></div>`:'';})()}
   <label class="mut">Если в файле нет номера карты — на какой счёт</label><select id="csv_acc">${S.accounts.filter(a=>a.kind==='card').map(a=>`<option value="${a.id}">${esc(a.name)}</option>`).join('')}</select>
   <label class="b">Выбрать CSV<input type="file" accept=".csv,text/csv" hidden onchange="doImport(this.files[0])"></label></div>
+  ${ownOps().length?`<div class="card"><b>Счета Tinkoff Black</b><p class="mut">Операции «между своими счетами Т‑Банка» записаны как доход/расход. На самом деле это переводы с/на счёт Black (Мама Black, Аня Black).</p><button class="b" onclick="migrateOwn()">Перенести переводы между своими счетами на Black (${ownOps().length} операций)</button></div>`:''}
   <div class="card"><b>2. Скриншоты списка операций</b><p class="mut">Скриншоты экрана «Операции» Т‑Банка, можно несколько. Распознавание идёт на телефоне.</p>
   <label class="mut">На какой счёт</label><select id="ss_acc">${S.accounts.filter(a=>a.kind==='card').map(a=>`<option value="${a.id}">${esc(a.name)}</option>`).join('')}</select>
   <label class="b">Выбрать скриншоты<input type="file" accept="image/*" multiple hidden onchange="doShots(this.files)"></label><div id="ss_prog" class="mut"></div></div>
@@ -229,7 +239,7 @@ let pending=[];
 async function doImport(file){const text=Core.decode(await file.arrayBuffer());const r=Core.parseTBank(text);if(r.errors.length)return alert(r.errors.join('\n'));
   // group by card account
   const groups={};r.ops.forEach(o=>{const a=cardAccFor(o.card);(groups[a]=groups[a]||[]).push(o);});
-  pending=[];for(const a in groups)pending.push(...Core.reconcile(groups[a],S.ops,a,'cash').map(p=>({...p,card:a,accept:p.action!=='duplicate'})));
+  pending=[];for(const a in groups)pending.push(...Core.reconcile(groups[a],S.ops,a,'cash',(blackFor(a)||{}).id).map(p=>({...p,card:a,accept:p.action!=='duplicate'})));
   renderReview(r.skipped);}
 function renderReview(skipped){const dup=pending.filter(p=>p.action==='duplicate').length;const L={link:'Связать с ручной записью',transfer:'Перевод наличные ⇄ карта',add:'Новая операция'};
   $('#review').innerHTML=`<div class="card"><b>Проверка</b><div class="mut">Уже загружено ранее (пропущено): ${dup}. Отклонённых/неуспешных строк: ${skipped}.</div></div>
@@ -239,7 +249,8 @@ function renderReview(skipped){const dup=pending.filter(p=>p.action==='duplicate
     ${k==='transfer'?'<div class="mut">Снимите галочку, если это не наличные — тогда будет добавлено как обычная операция.</div>':''}</div>`;}).join('')}
   <button class="b" onclick="applyImport()">Применить</button>`;}
 async function applyImport(){let n=0;for(const p of pending){const op=p.op;if(p.action==='duplicate')continue;
-  if(p.action==='link'&&p.accept){const t=S.ops.find(o=>o.id===p.target);t.bankIds=[...(t.bankIds||[]),op.bankId];await put('ops',t);n++;continue;}
+  if(p.action==='transfer'&&p.accept)for(const x of [p.from,p.to]){const c=S.accounts.find(a=>a.id===x);if(!c){const card=S.accounts.find(a=>blackFor(a.id)&&blackFor(a.id).id===x);if(card)await ensureAcc(blackFor(card.id));}}
+  if(p.action==='link'&&p.accept){const t=S.ops.find(o=>o.id===p.target);t.bankIds=[...(t.bankIds||[]),op.bankId];if(p.side)t.sides=[...(t.sides||[]),p.side];await put('ops',t);n++;continue;}
   let o={id:uid(),amount:Math.abs(op.amount),date:op.date,note:op.desc,bankIds:[op.bankId],reviewed:false};
   if(p.action==='transfer'&&p.accept)o={...o,type:'transfer',accountId:p.from,toAccountId:p.to,category:''};
   else if(p.action==='link'&&!p.accept||p.action==='transfer'&&!p.accept||p.action==='add'&&p.accept)o={...o,type:op.amount<0?'expense':'income',accountId:p.card,category:guessCat(op)};
@@ -269,12 +280,12 @@ function renderSS(){$('#ssedit').innerHTML=`<div class="card"><b>Распозн�
   <button class="b" onclick="ssToReview()">Далее: проверка дублей</button></div>`;}
 function ssToReview(){const rows=ssRows.filter(r=>r.amount&&r.date).map(r=>({...r,date:r.date+'T00:00:00',amount:+r.amount}));
   const ops=Core.screenshotIds(rows).map(r=>({bankId:r.bankId,date:r.date,amount:r.amount,desc:r.desc,bankCategory:r.cat||'',card:'',mcc:''}));
-  pending=Core.reconcile(ops,S.ops,ssAcc,'cash').map(p=>({...p,card:ssAcc,accept:p.action!=='duplicate'}));
+  pending=Core.reconcile(ops,S.ops,ssAcc,'cash',(blackFor(ssAcc)||{}).id).map(p=>({...p,card:ssAcc,accept:p.action!=='duplicate'}));
   $('#ssedit').innerHTML='';renderReview(0);$("#review").scrollIntoView();}
 // ---- CoinKeeper import ----
 let CK=null;
 const ckSkipped=()=>JSON.parse(localStorage.ckSkipped||'[]');
-const APP_VER='v13';
+const APP_VER='v14';
 let CKB=[];try{CKB=JSON.parse(localStorage.ckBanks||'[]');}catch(e){CKB=[];}
 function ckbStatus(){const el=$('#ckb');if(!el)return;el.innerHTML=CKB.length?'✅ Выписки загружены: '+CKB.map(b=>esc((b.accountId?accName(b.accountId):b.name)+' ('+b.ops.length+' операций)')).join(', ')+' <button class="b s" onclick="CKB=[];localStorage.removeItem(\'ckBanks\');ckbStatus();if(CK){CK=Core.planCoinKeeper(CK.items.map(i=>i.row),{accounts:S.accounts,cats:S.cats,ops:S.ops,skipped:ckSkipped()});CK.items.forEach(i=>{i.accept=i.action===\'add\'||i.action===\'link\'});renderCK();}">Сбросить</button>':'<span class="neg">⚠️ Выписки не загружены — подсказок банка не будет. Сначала нажмите кнопку выше.</span>';}
 async function ckBanks(files){CKB=[];for(const f of files){const r=Core.parseTBank(Core.decode(await f.arrayBuffer()));if(r.ops.length)CKB.push({name:f.name,ops:r.ops});}
@@ -284,6 +295,7 @@ async function ckBanks(files){CKB=[];for(const f of files){const r=Core.parseTBa
 function ckReplan(){const rows=CK.items.map(i=>i.row);CK=Core.planCoinKeeper(rows,{accounts:S.accounts,cats:S.cats,ops:S.ops,skipped:ckSkipped()});
   CK.items.forEach(i=>{i.accept=i.action==='add'||i.action==='link';});ckSuggest();renderCK();}
 function ckSuggest(){if(!CKB.length||!CK)return;CKB.forEach(b=>{const g=Core.guessBankAccount(CK,b.ops);b.accountId=g&&g.accountId;});
+  CKB.forEach(b=>{const bl=b.accountId&&blackFor(b.accountId);b.ownAccountId=bl&&bl.id;if(bl&&bl._new&&!CK.newAccounts.find(x=>x.id===bl.id)){const n={...bl};delete n._new;CK.newAccounts.push(n);}});
   const banks=CKB.filter(b=>b.accountId);CK.bankStat=Core.suggestCoinKeeper(CK,banks,S.cats.filter(c=>!c.income).map(c=>c.name));
   CK.bankNote=banks.map(b=>b.name+' → '+accName(b.accountId)).join(', ');
   CK.items.forEach(i=>{if(i.action==='decide'&&i.sugChoice)i.choice=i.sugChoice;});}

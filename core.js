@@ -185,6 +185,7 @@ function suggestCoinKeeper(plan,banks,catNames){const stat={pairConfirmed:0,pair
     const o=m[0];used.add(o);const k=bankKind(o,banks.filter(x=>x!==b));it.bank=k;it.bankOp=o;
     if(k.kind==='cash_in'||k.kind==='cash_out'){it.sugChoice='transfer';}
     else if(k.kind==='family'){it.sugChoice='card';it.otherAcc=k.otherAcc;}
+    else if(k.kind==='own'&&b.ownAccountId){it.sugChoice='card';it.otherAcc=b.ownAccountId;}
     else if(it.inflow){it.sugChoice='income';it.sugCat='Прочее';it.sugNote=k.kind==='person_in'?'Перевод от '+k.sender:'Банк: '+k.label;}
     else{it.sugChoice='expense';it.sugCat=(catNames||[]).includes(k.category)?k.category:'Прочее';it.sugNote='Банк: '+k.label;}
     it.choice=it.sugChoice;it.hint='Банк: '+k.label;stat.decided[k.kind]=(stat.decided[k.kind]||0)+1;}
@@ -198,7 +199,8 @@ function isCash(op){const d=String(op.desc||'').toLowerCase();
 const days=(a,b)=>Math.abs(new Date(a)-new Date(b))/864e5;
 // Classify imported ops against existing operations.
 // existing: [{id,type,amount(positive),accountId,toAccountId,date,bankIds:[]}], cardAccountId, cashAccountId
-function reconcile(imported, existing, cardAcc, cashAcc){
+const OWN=/между своими счетами/i;
+function reconcile(imported, existing, cardAcc, cashAcc, ownAcc){
   const known=new Set(); existing.forEach(o=>(o.bankIds||[]).forEach(b=>known.add(b)));
   const used=new Set(); const out=[];
   for(const op of imported){
@@ -215,6 +217,11 @@ function reconcile(imported, existing, cardAcc, cashAcc){
       (dir==='in'&&((o.type==='income'&&o.accountId===cardAcc)||(o.type==='transfer'&&o.toAccountId===cardAcc)))))
       .sort((a,b)=>days(a.date,op.date)-days(b.date,op.date));
     if(cand.length){used.add(cand[0].id);out.push({op,action:'link',target:cand[0].id});continue;}
+    // transfer between own T-Bank accounts: link to the other side already recorded (e.g. converted CoinKeeper row), else new transfer
+    if(OWN.test(op.desc||'')){const t=existing.find(o=>!used.has(o.id)&&o.type==='transfer'&&Math.abs(o.amount-abs)<0.005&&days(o.date.slice(0,10),op.date.slice(0,10))<=1&&
+        (dir==='out'?o.accountId===cardAcc:o.toAccountId===cardAcc)&&!(o.sides||[]).includes(cardAcc));
+      if(t){used.add(t.id);out.push({op,action:'link',target:t.id,side:cardAcc});continue;}
+      if(ownAcc&&ownAcc!==cardAcc){out.push({op,action:'transfer',from:dir==='in'?ownAcc:cardAcc,to:dir==='in'?cardAcc:ownAcc});continue;}}
     const c=isCash(op);
     if(c==='in') out.push({op,action:'transfer',from:cashAcc,to:cardAcc});
     else if(c==='out') out.push({op,action:'transfer',from:cardAcc,to:cashAcc});
@@ -222,10 +229,13 @@ function reconcile(imported, existing, cardAcc, cashAcc){
   }
   return out;
 }
+// already-stored «между своими счетами» income/expense on cardAcc -> transfer with ownAcc (same id/date/amount)
+function ownToTransfer(o,ownAcc){const n={...o,type:'transfer',category:'',sides:[o.accountId]};
+  if(o.type==='income'){n.accountId=ownAcc;n.toAccountId=o.accountId;}else{n.accountId=o.accountId;n.toAccountId=ownAcc;}return n;}
 function balances(accounts,ops){const b={};accounts.forEach(a=>b[a.id]=+a.initial||0);
   for(const o of ops){ if(o.type==='expense')b[o.accountId]-=o.amount; else if(o.type==='income')b[o.accountId]+=o.amount;
     else if(o.type==='transfer'){b[o.accountId]-=o.amount;b[o.toAccountId]+=o.amount;} }
   return b;}
-root.Core={suggestCoinKeeper,guessBankAccount,bankKind,parseCoinKeeper,planCoinKeeper,decideOp,parseScreenshotText,screenshotIds,similar,decode,parseTBank,reconcile,balances,hash,isCash};
+root.Core={ownToTransfer,OWN,suggestCoinKeeper,guessBankAccount,bankKind,parseCoinKeeper,planCoinKeeper,decideOp,parseScreenshotText,screenshotIds,similar,decode,parseTBank,reconcile,balances,hash,isCash};
 if(typeof module!=='undefined')module.exports=root.Core;
 })(typeof self!=='undefined'?self:globalThis);
