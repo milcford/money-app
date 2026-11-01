@@ -26,7 +26,9 @@ async function load(){
   for(const st of ['accounts','ops','cats'])S[st]=await all(st);S.accounts.sort(byOrder);S.cats.sort(byOrder);}
 // ---- sync ----
 let syncing=false,syncAgain=false,syncTimer=null,syncMsg='';
-const syncUrl=()=>(localStorage.syncUrl||'').replace(/\/+$/,'');
+// served from our own server -> same origin by default; on GitHub Pages user enters the URL
+const SAME_ORIGIN=!/github\.io$/.test(location.hostname)&&location.protocol==='https:';
+const syncUrl=()=>(localStorage.syncUrl||(SAME_ORIGIN?location.origin:'')).replace(/\/+$/,'');
 function scheduleSync(){clearTimeout(syncTimer);syncTimer=setTimeout(runSync,1500);}
 function syncLabel(){if(!syncUrl())return '';if(!localStorage.syncToken)return '⚠ войдите в синхронизацию';if(syncMsg)return syncMsg;
   const t=+localStorage.syncAt;return t?'☁ '+new Date(t).toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'}):'☁';}
@@ -40,7 +42,7 @@ async function runSync(){if(!db||!syncUrl()||!localStorage.syncToken)return setS
   syncing=false;if(syncAgain){syncAgain=false;runSync();}}
 setInterval(runSync,60000);addEventListener('online',runSync);document.addEventListener('visibilitychange',()=>{if(!document.hidden)runSync();});
 function syncSheet(){openSheet(`<b>Синхронизация между устройствами</b><p class="mut">Данные хранятся на телефоне и работают без интернета; при наличии сети изменения отправляются на ваш сервер.</p>
-  <label class="mut">Адрес сервера (https)</label><input id="sy_url" placeholder="https://example.ru/money" value="${esc(localStorage.syncUrl||'https://money.138-16-160-124.sslip.io')}" autocapitalize="off" autocorrect="off">
+  <label class="mut">Адрес сервера (https)</label><input id="sy_url" placeholder="https://example.ru/money" value="${esc(syncUrl()||'https://money.138-16-160-124.sslip.io')}" autocapitalize="off" autocorrect="off">
   ${localStorage.syncToken?`<div class="mut">Вход выполнен. ${esc(syncLabel())}</div><button class="b" onclick="closeSheet();runSync()">Синхронизировать сейчас</button><button class="b r" onclick="syncLogout()">Выйти</button>`:
   `<label class="mut">Пароль</label><input id="sy_pw" type="password" autocomplete="current-password"><button class="b" onclick="syncLogin()">Войти</button>`}
   <div id="sy_err" class="neg"></div><button class="b s" onclick="closeSheet()">Закрыть</button>`);}

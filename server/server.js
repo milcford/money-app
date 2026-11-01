@@ -13,6 +13,22 @@ const HASH=process.env.MONEY_PASSWORD_HASH||'';
 const ORIGINS=(process.env.ALLOWED_ORIGINS||'').split(',').map(s=>s.trim()).filter(Boolean);
 const TRUST_PROXY=process.env.TRUST_PROXY==='1';
 const SESSION_DAYS=+process.env.SESSION_DAYS||180;
+const PUBLIC_DIR=path.resolve(process.env.PUBLIC_DIR||path.join(__dirname,'public'));
+const MIME={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.json':'application/json; charset=utf-8','.webmanifest':'application/manifest+json','.svg':'image/svg+xml','.png':'image/png','.ico':'image/x-icon','.txt':'text/plain; charset=utf-8'};
+function serveStatic(req,res,pathname){
+  if(req.method!=='GET'&&req.method!=='HEAD'){res.writeHead(405);return res.end();}
+  let rel;try{rel=decodeURIComponent(pathname);}catch{res.writeHead(400);return res.end();}
+  if(rel.includes('\0')){res.writeHead(400);return res.end();}
+  if(rel.endsWith('/'))rel+='index.html';
+  const file=path.resolve(PUBLIC_DIR,'.'+path.posix.normalize('/'+rel));
+  if(!file.startsWith(PUBLIC_DIR+path.sep)||path.basename(file).startsWith('.')){res.writeHead(404);return res.end('not found');}
+  const type=MIME[path.extname(file).toLowerCase()];
+  fs.stat(file,(err,st)=>{if(err||!st.isFile()||!type){res.writeHead(404,{'content-type':'text/plain'});return res.end('not found');}
+    const noCache=/(^|\/)(sw\.js|index\.html)$/.test(file);
+    const etag='"'+st.size.toString(16)+'-'+Math.floor(st.mtimeMs).toString(16)+'"';
+    const h={'content-type':type,'content-length':st.size,etag,'x-content-type-options':'nosniff','cache-control':noCache?'no-cache':'public, max-age=300'};
+    if(req.headers['if-none-match']===etag){res.writeHead(304,h);return res.end();}
+    res.writeHead(200,h);if(req.method==='HEAD')return res.end();fs.createReadStream(file).pipe(res);});}
 const STORES=new Set(['accounts','ops','cats']);
 if(!HASH){console.error('MONEY_PASSWORD_HASH не задан (см. README)');process.exit(1);}
 fs.mkdirSync(path.dirname(DB_PATH),{recursive:true});
@@ -49,7 +65,8 @@ function applyChanges(changes){let seq=q.seq.get().v,n=0;db.exec('BEGIN');
       q.up.run(c.store,c.id,data,t,del,++seq);n++;}
     q.setSeq.run(seq);db.exec('COMMIT');}catch(e){db.exec('ROLLBACK');throw e;}return n;}
 const server=http.createServer(async(req,res)=>{
-  try{const url=new URL(req.url,'http://x');const p=url.pathname.replace(/^.*?\/api\//,'/api/'); // works behind any subpath prefix
+  try{const url=new URL(req.url,'http://x');if(!/\/api\//.test(url.pathname))return serveStatic(req,res,url.pathname);
+    const p=url.pathname.replace(/^.*?\/api\//,'/api/'); // works behind any subpath prefix
     if(req.method==='OPTIONS')return send(res,204,undefined,req);
     if(p==='/api/health')return send(res,200,{ok:true},req);
     if(p==='/api/login'&&req.method==='POST'){const ip=ipOf(req),f=fails.get(ip);

@@ -1,4 +1,4 @@
-const C='money-v5',F=['./','index.html','core.js','app.js','manifest.json','icon.svg','style.css','sync.js'];
+const C='money-v6',F=['./','index.html','core.js','app.js','manifest.json','icon.svg','style.css','sync.js'];
 self.addEventListener('install',e=>{self.skipWaiting();e.waitUntil(caches.open(C).then(c=>c.addAll(F)));});
 self.addEventListener('activate',e=>e.waitUntil(caches.keys().then(k=>Promise.all(k.filter(x=>x!==C).map(x=>caches.delete(x))))));
 const CDN=/cdn\.jsdelivr\.net|unpkg\.com|tessdata/;
