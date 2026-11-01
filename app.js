@@ -12,7 +12,7 @@ const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,7);
 const byOrder=(a,b)=>(a.order??0)-(b.order??0);
 const COLORS={inc:'#2c4a9a',cash:'#c9a84c',savings:'#4caf72',card:'#4a3b1c',exp:'#0d2626'};
 const PALETTE=['#2c4a9a','#c9a84c','#4caf72','#4a3b1c','#0d2626','#8e44ad','#c0392b','#16a085','#d35400','#555'];
-async function ensureBlacks(){const acc=await raw('accounts');for(const[id,name,card]of[['mama_black','Мама Black','mama_t'],['anya_black','Аня Black','anya_t']])
+async function ensureBlacks(){const acc=await raw('accounts');for(const x of acc)if((x.id==='mama_t'||x.id==='anya_t')&&x.credit===undefined)await put('accounts',{...x,credit:true,limit:x.limit||0});for(const[id,name,card]of[['mama_black','Мама Black','mama_t'],['anya_black','Аня Black','anya_t']])
   if(acc.some(a=>a.id===card)&&!acc.some(a=>a.id===id))await putRaw('accounts',{id,name,kind:'card',icon:'🖤',color:'#222',initial:0,cardMask:'',order:50,updatedAt:1,_dirty:1});}
 async function load(){
   // migrate pre-sync records
@@ -102,20 +102,21 @@ function opMatch(k,id){if(k==='inc'){const n=itemOf('inc',id).name;return o=>o.t
   if(k==='exp'){const n=itemOf('exp',id).name;return o=>o.type==='expense'&&o.category===n;}
   return o=>o.accountId===id||o.toAccountId===id;}
 function opVal(k,id,o){if(k!=='acc')return o.amount;if(o.type==='transfer')return o.toAccountId===id?o.amount:-o.amount;return o.type==='income'?o.amount:-o.amount;}
-function header(){const m=monthSums(PER),b=Core.balances(S.accounts,S.ops);const tot=S.accounts.filter(a=>a.kind!=='savings').reduce((x,a)=>x+b[a.id],0);
+function header(){const m=monthSums(PER),b=Core.balances(S.accounts,S.ops);const tot=S.accounts.filter(a=>a.kind!=='savings').reduce((x,a)=>x+(a.credit?Math.max(0,b[a.id]):b[a.id]),0);const debt=S.accounts.filter(a=>a.credit).reduce((x,a)=>x+Math.max(0,-b[a.id]),0);
   $('#top').innerHTML=`<div class="prof" onclick="renameProfile()">${esc(localStorage.profile||'Мои финансы')} ⌄</div><div id="sync" onclick="syncSheet()" style="position:absolute;right:14px;top:calc(env(safe-area-inset-top) + 12px);font-size:12px;color:#9ab">${esc(syncLabel())}</div>
-  <div class="figs"><div><b>Расходы</b><span>${fmt(m.exp)}</span></div><div><b>Баланс</b><span>${fmt(tot)}</span></div><div><b>Доходы</b><span>${fmt(m.inc)}</span></div></div>${perBar()}`;
+  <div class="figs"><div><b>Расходы</b><span>${fmt(m.exp)}</span></div><div onclick="show('recon')" style="cursor:pointer"><b>Баланс</b><span>${fmt(tot)}</span>${debt?`<small style="display:block;color:#e57373;font-size:11px">Долг по кредиткам ${fmt(debt)}</small>`:''}</div><div><b>Доходы</b><span>${fmt(m.inc)}</span></div></div>${perBar()}`;
   const n=S.ops.filter(o=>o.reviewed===false).length,bd=$('#badge');bd.textContent=n;bd.style.display=n?'block':'none';}
 function renameProfile(){const n=prompt('Название',localStorage.profile||'Мои финансы');if(n){localStorage.profile=n;header();}}
 // ---- circles ----
 function circ(kind,item,amt){const cls=kind==='inc'?'inc':kind==='exp'?'exp':'acc';
   const style=kind==='acc'||item.color&&item.color!==COLORS[kind]?`background:${item.color}`:'';
-  return `<div class="c ${cls}" data-k="${kind}" data-id="${item.id}"><div class="lbl">${esc(item.name)}</div><div class="ic" style="${style}">${esc(item.icon||'•')}</div><div class="amt">${fmt(amt)}</div></div>`;}
+  return `<div class="c ${cls}" data-k="${kind}" data-id="${item.id}"><div class="lbl">${esc(item.name)}</div><div class="ic" style="${style}">${esc(item.icon||'•')}</div><div class="amt">${fmt(amt)}</div>${kind==='acc'&&item.credit?`<div class="mut" style="font-size:10px;text-align:center">${item.limit?'доступно '+fmt(+item.limit+(amt||0)):(amt<0?'долг':'')}</div>`:''}</div>`;}
 const addCirc=k=>`<div class="c add" data-k="add" data-add="${k}"><div class="lbl">.</div><div class="ic">＋</div><div class="amt"> </div></div>`;
 function pager(items,per,id){const pages=[];for(let i=0;i<items.length;i+=per)pages.push(items.slice(i,i+per));if(!pages.length)pages.push([]);
   return `<div class="pager" id="${id}" onscroll="dots(this)">${pages.map(p=>`<div class="page">${p.join('')}</div>`).join('')}</div><div class="dots">${pages.length>1?pages.map((_,i)=>`<i class="${i?'':'on'}"></i>`).join(''):''}</div>`;}
 function dots(el){const i=Math.round(el.scrollLeft/el.clientWidth);el.nextElementSibling.querySelectorAll('i').forEach((d,j)=>d.classList.toggle('on',i===j));}
 const views={
+recon(){reconSheet();},
 detail(a){a=a||window._arg;if(a)detail(a.k,a.id);},
 home(){const m=monthSums(PER),b=Core.balances(S.accounts,S.ops);
   const inc=S.cats.filter(c=>c.income).map(c=>circ('inc',c,m.byInc[c.name]));inc.push(addCirc('inc'));
@@ -155,7 +156,7 @@ function hrow(o){const[ic,col]=opIcon(o);const t=o.type==='transfer'?`${accName(
   <div class="t"><div>${esc(t)}</div><div class="mut">${esc(sub)}${o.note?' · '+esc(o.note):''} ${(o.bankIds||[]).some(b=>!String(b).startsWith('ck:'))?'<span class="tag">банк</span>':''}</div></div>
   <b class="${o.type==='expense'?'neg':o.type==='income'?'pos':''}">${o.type==='expense'?'−':o.type==='income'?'+':''}${fmt(o.amount)}</b></div>`;}
 async function markAll(){for(const o of S.ops)if(o.reviewed===false){o.reviewed=true;await put('ops',o);}refresh();}
-function menu(){openSheet(`<b>Меню</b><button class="b s" onclick="closeSheet();editCirc('acc')">+ Добавить счёт</button>${S.accounts.some(a=>a.archived)?`<div class="mut">Архив: ${S.accounts.filter(a=>a.archived).map(a=>`<a href="#" onclick="closeSheet();editCirc('acc','${a.id}');return false">${esc(a.name)}</a>`).join(', ')}</div>`:''}<button class="b s" onclick="closeSheet();show('import')">Импорт CSV / скриншоты</button>
+function menu(){openSheet(`<b>Меню</b><button class="b s" onclick="closeSheet();show('recon')">Сверить остатки</button><button class="b s" onclick="closeSheet();editCirc('acc')">+ Добавить счёт</button>${S.accounts.some(a=>a.archived)?`<div class="mut">Архив: ${S.accounts.filter(a=>a.archived).map(a=>`<a href="#" onclick="closeSheet();editCirc('acc','${a.id}');return false">${esc(a.name)}</a>`).join(', ')}</div>`:''}<button class="b s" onclick="closeSheet();show('import')">Импорт CSV / скриншоты</button>
   <button class="b s" onclick="exportJSON()">Скачать резервную копию (JSON)</button><label class="b s">Восстановить из JSON<input type="file" accept=".json" hidden onchange="importJSON(this.files[0])"></label>
   <button class="b s" onclick="syncSheet()">☁ Синхронизация</button><button class="b s" onclick="closeSheet();renameProfile()">Название профиля</button><button class="b s" onclick="closeSheet()">Закрыть</button>`);}
 // ---- operation sheet with numpad ----
@@ -188,16 +189,38 @@ function editCirc(k,id){const it=id?{...itemOf(k,id)}:k==='acc'?{id:uid(),name:'
   openSheet(`<b>${id?'':'Новый: '}${t}</b><input id="ce_name" placeholder="Название" value="${esc(it.name)}">
   <div class="flow"><input id="ce_icon" placeholder="Иконка (эмодзи)" value="${esc(it.icon)}" style="width:90px;flex:none;text-align:center;font-size:24px"><div class="mut">Любой эмодзи: 🛒 🍕 🚕 💊 🎁 ✈️ 🐶</div></div>
   <div class="swatch">${PALETTE.map(c=>`<button style="background:${c}" class="${c===it.color?'on':''}" onclick="_ce.it.color='${c}';this.parentNode.querySelectorAll('button').forEach(b=>b.classList.remove('on'));this.classList.add('on')"></button>`).join('')}</div>
-  ${k==='acc'?`<label class="mut">Тип</label><select id="ce_kind" onchange="$('#ce_bankw').style.display=this.value==='card'?'':'none'">${[['card','Банковский счёт / карта'],['cash','Наличные'],['savings','Накопления (не в балансе)']].map(([v,n])=>`<option value="${v}" ${it.kind===v?'selected':''}>${n}</option>`).join('')}</select>
+  ${k==='acc'?`<label class="mut">Тип</label><select id="ce_kind" onchange="$('#ce_bankw').style.display=$('#ce_credw').style.display=this.value==='card'?'':'none'">${[['card','Банковский счёт / карта'],['cash','Наличные'],['savings','Накопления (не в балансе)']].map(([v,n])=>`<option value="${v}" ${it.kind===v?'selected':''}>${n}</option>`).join('')}</select>
    <div id="ce_bankw" style="${it.kind==='card'?'':'display:none'}"><label class="mut">Банк (какой формат выписки)</label><select id="ce_bank">${BANKS.map(([v,n])=>`<option value="${v}" ${bankOf(it)===v?'selected':''}>${n}</option>`).join('')}</select></div>
-   <label class="mut">Начальный остаток, ₽</label><input id="ce_init" inputmode="decimal" value="${it.initial||''}" placeholder="0">
+   <div id="ce_credw" style="${it.kind==='card'?'':'display:none'}"><label class="row"><span>Кредитная карта</span><input type="checkbox" id="ce_credit" style="width:auto" ${it.credit?'checked':''} onchange="$('#ce_limw').style.display=this.checked?'':'none'"></label>
+    <div id="ce_limw" style="${it.credit?'':'display:none'}"><label class="mut">Кредитный лимит, ₽</label><input id="ce_limit" inputmode="decimal" value="${it.limit||''}" placeholder="например 150000"></div></div>
+   <label class="mut">${id?'Текущее состояние (если изменить — добавится «Корректировка баланса»)':'Текущее состояние'}</label>
+   <div class="flow" style="display:flex;gap:8px"><select id="ce_bmode" style="width:auto">${[['bal','Остаток, ₽'],['debt','Долг, ₽'],['avail','Доступно, ₽']].map(([v,n])=>`<option value="${v}">${n}</option>`).join('')}</select>
+   <input id="ce_init" inputmode="decimal" style="flex:1" value="${id?Math.round(Core.balances(S.accounts,S.ops)[id]*100)/100:''}" placeholder="0"></div>
+   <div class="mut">Для кредитки можно ввести долг или «Доступно» из приложения банка — остаток посчитается сам (долг = минус).</div>
    <label class="mut">Последние 4 цифры карты (для импорта)</label><input id="ce_mask" inputmode="numeric" maxlength="4" value="${esc(it.cardMask||'')}" placeholder="1234">`:''}
   <button class="b" onclick="saveCirc()">Сохранить</button>
   ${id?`<div class="flow"><button class="b s" onclick="moveCirc(-1)">← Левее</button><button class="b s" onclick="moveCirc(1)">Правее →</button></div>${k==='acc'?`<button class="b s" onclick="archAcc()">${it.archived?'Вернуть из архива':'В архив (скрыть, операции останутся)'}</button>`:''}<button class="b r" onclick="delCirc()">Удалить</button>`:''}`);}
 async function archAcc(){const a=_ce.it;a.archived=!a.archived;await put('accounts',a);closeSheet();refresh();toast(a.archived?'Счёт в архиве':'Счёт возвращён');}
+const pnum=s=>parseFloat(String(s||'').replace(',','.').replace(/\s|\u00a0/g,''));
+// what the user typed (balance / debt / available) -> wallet balance
+const toBal=(a,mode,v)=>isNaN(v)?NaN:mode==='debt'?-Math.abs(v):mode==='avail'?v-(+a.limit||0):v;
+// make the wallet show `want` by adding a «Корректировка баланса» operation (keeps history consistent, syncs)
+async function setBalance(id,want){const cur=Core.balances(S.accounts,S.ops)[id]||0;const d=Math.round((want-cur)*100)/100;if(Math.abs(d)<0.005)return false;
+  const inc=d>0,name='Корректировка баланса';
+  if(!S.cats.find(c=>c.name===name&&c.income===inc)){const c={id:(inc?'inc_':'exp_')+'corr',name,income:inc,icon:'⚖️',color:inc?COLORS.inc:COLORS.exp,order:999};await put('cats',c);S.cats.push(c);}
+  const o={id:uid(),type:inc?'income':'expense',amount:Math.abs(d),accountId:id,category:name,date:today(),note:name,reviewed:true};await put('ops',o);S.ops.push(o);return true;}
+const credInfo=(a,bal)=>a.credit?`${bal<0?'долг '+fmt(-bal):'долга нет'}${a.limit?' · доступно '+fmt(+a.limit+bal):''}`:'';
+function reconSheet(){const b=Core.balances(S.accounts,S.ops);V.innerHTML=`<div class="hdr"><h2>Сверить остатки</h2><button onclick="show('home')">‹ Назад</button></div>
+  <div class="card mut">Введите реальную сумму из приложения банка или кошелька. Для кредиток можно выбрать «Долг» или «Доступно». Для каждого изменённого счёта добавится операция «Корректировка баланса» на разницу. Пустые поля не меняются.</div>
+  <div class="card">${liveAccs().map(a=>`<div class="row" style="flex-wrap:wrap"><span style="flex:1">${esc(a.icon||'')} ${esc(a.name)}<div class="mut">сейчас ${fmt(b[a.id])}${a.credit?' · '+credInfo(a,b[a.id]):''}</div></span>
+   ${a.credit?`<select id="rm_${a.id}" style="width:auto"><option value="debt">Долг</option><option value="avail">Доступно</option><option value="bal">Остаток</option></select>`:''}<input id="rb_${a.id}" inputmode="decimal" style="width:120px" placeholder="${a.credit&&b[a.id]<0?Math.round(-b[a.id]*100)/100:Math.round(b[a.id]*100)/100}"></div>`).join('')}</div>
+  <button class="b" onclick="saveRecon()">Сохранить</button>`;}
+async function saveRecon(){let n=0;for(const a of liveAccs()){const v=pnum(($('#rb_'+a.id)||{}).value);const w=toBal(a,a.credit?$('#rm_'+a.id).value:'bal',v);if(!isNaN(w)&&await setBalance(a.id,w))n++;}
+  S.ops=await all('ops');S.cats=await all('cats');S.cats.sort(byOrder);toast('Исправлено счетов: '+n);show('home');}
 async function saveCirc(){const{k,it}=_ce;const name=$('#ce_name').value.trim();if(!name)return toast('Введите название');
   const oldName=it.name;it.name=name;it.icon=$('#ce_icon').value.trim()||'•';
-  if(k==='acc'){it.kind=$('#ce_kind').value;it.initial=parseFloat($('#ce_init').value.replace(',','.').replace(/\s/g,''))||0;it.cardMask=$('#ce_mask').value.replace(/\D/g,'');if(it.kind==='card')it.bank=$('#ce_bank').value;else delete it.bank;await put('accounts',it);}
+  if(k==='acc'){it.kind=$('#ce_kind').value;it.credit=it.kind==='card'&&$('#ce_credit').checked;it.limit=it.credit?(pnum($('#ce_limit').value)||0):0;
+    const want=toBal(it,$('#ce_bmode').value,pnum($('#ce_init').value));if(_ce.isNew)it.initial=isNaN(want)?0:want;it.cardMask=$('#ce_mask').value.replace(/\D/g,'');if(it.kind==='card')it.bank=$('#ce_bank').value;else delete it.bank;await put('accounts',it);if(!_ce.isNew&&!isNaN(want)){S.accounts=await all('accounts');await setBalance(it.id,want);}}
   else{await put('cats',it);if(oldName&&oldName!==name)for(const o of S.ops)if(o.category===oldName&&(o.type==='income')===it.income){o.category=name;await put('ops',o);}}
   closeSheet();refresh();}
 async function moveCirc(d){const{k,it}=_ce;const list=k==='acc'?S.accounts:S.cats.filter(c=>c.income===(k==='inc'));const i=list.findIndex(x=>x.id===it.id),j=i+d;if(j<0||j>=list.length)return;
@@ -223,7 +246,9 @@ function detail(k,id){const it=itemOf(k,id),f=opMatch(k,id);const all=S.ops.filt
   V.innerHTML=`<div class="hdr"><h2>${esc(it.icon||'')} ${esc(it.name)}</h2><button onclick="show('home')">‹ Назад</button></div>
   <div class="card"><div class="row"><span>${esc(perLabel(PER))}${k==='acc'?' (приход − расход)':''}</span><b class="${k==='exp'?'neg':'pos'}">${fmt(tot)}</b></div>
   <button class="b" onclick="${add.replace(/"/g,'&quot;')}">+ Добавить</button>
-  <button class="b s" onclick="window._hf={k:'${k}',id:'${id}',m:PER};show('history')">Открыть в Истории</button></div>
+  ${k==='acc'?(()=>{const bal=Core.balances(S.accounts,S.ops)[id];return `<div class="row"><span>Остаток сейчас</span><b>${fmt(bal)}</b></div>${it.credit?`<div class="row"><span>Кредитка</span><span>${esc(credInfo(it,bal))}${it.limit?' · лимит '+fmt(it.limit):''}</span></div>`:''}`;})():''}
+  <button class="b s" onclick="window._hf={k:'${k}',id:'${id}',m:PER};show('history')">Открыть в Истории</button>
+  <button class="b s" onclick="editCirc('${k}','${id}')">✎ ${k==='acc'?'Изменить счёт / указать остаток':'Изменить'}</button></div>
   <div class="card"><b>По месяцам</b>${Object.entries(bm).sort((a,b)=>b[0].localeCompare(a[0])).map(([m,v])=>`<div class="row" onclick="setPer('${m}')" style="cursor:pointer"><span>${perLabel(m)}</span><b>${fmt(v)}</b></div>`).join('')||'<div class="mut">Нет операций</div>'}</div>
   <div class="card"><b>Операции (${ops.length})</b></div>${dayGroups(ops.slice(0,300))}${ops.length>300?`<div class="mut">…ещё ${ops.length-300}, см. Историю</div>`:''}`;}
 // ---- drag & drop between circles ----
@@ -324,7 +349,7 @@ function ssToReview(){const rows=ssRows.filter(r=>r.amount&&r.date).map(r=>({...
 // ---- CoinKeeper import ----
 let CK=null;
 const ckSkipped=()=>JSON.parse(localStorage.ckSkipped||'[]');
-const APP_VER='v18';
+const APP_VER='v19';
 let CKB=[];try{CKB=JSON.parse(localStorage.ckBanks||'[]');}catch(e){CKB=[];}
 function ckbStatus(){const el=$('#ckb');if(!el)return;el.innerHTML=CKB.length?'✅ Выписки загружены: '+CKB.map(b=>esc((b.accountId?accName(b.accountId):b.name)+' ('+b.ops.length+' операций)')).join(', ')+' <button class="b s" onclick="CKB=[];localStorage.removeItem(\'ckBanks\');ckbStatus();if(CK){CK=Core.planCoinKeeper(CK.items.map(i=>i.row),{accounts:S.accounts,cats:S.cats,ops:S.ops,skipped:ckSkipped()});CK.items.forEach(i=>{i.accept=i.action===\'add\'||i.action===\'link\'});renderCK();}">Сбросить</button>':'<span class="neg">⚠️ Выписки не загружены — подсказок банка не будет. Сначала нажмите кнопку выше.</span>';}
 async function ckBanks(files){CKB=[];for(const f of files){const r=Core.parseTBank(Core.decode(await f.arrayBuffer()));if(r.ops.length)CKB.push({name:f.name,ops:r.ops});}
