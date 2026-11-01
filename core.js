@@ -224,9 +224,11 @@ function reconcile(imported, existing, cardAcc, cashAcc, ownAcc, pairAcc){
         (dir==='out'?o.accountId===cardAcc:o.toAccountId===cardAcc)&&!(o.sides||[]).includes(cardAcc));
       if(t){used.add(t.id);out.push({op,action:'link',target:t.id,side:cardAcc});continue;}
       // Black statement: the other side was recorded on the paired card as income/expense (e.g. «Прочее») -> convert it to a transfer
-      if(pairAcc){const want=dir==='out'?'income':'expense';const cs=existing.filter(o=>!used.has(o.id)&&o.type===want&&o.accountId===pairAcc&&Math.abs(o.amount-abs)<0.005&&days(o.date.slice(0,10),op.date.slice(0,10))<=1&&(OWN.test(o.note||'')||/^прочее$/i.test(o.category||'')))
-          .sort((a,b)=>(OWN.test(b.note||'')-OWN.test(a.note||''))||days(a.date,op.date)-days(b.date,op.date));
-        if(cs.length){used.add(cs[0].id);out.push({op,action:'convert',target:cs[0].id,from:dir==='out'?cardAcc:pairAcc,to:dir==='out'?pairAcc:cardAcc});continue;}}
+      const pri=o=>OWN.test(o.note||'')?0:/^прочее$/i.test(o.category||'')?1:2;
+      if(pairAcc){const want=dir==='out'?'income':'expense';const cs=existing.filter(o=>!used.has(o.id)&&o.type===want&&o.accountId===pairAcc&&Math.abs(o.amount-abs)<0.005&&days(o.date.slice(0,10),op.date.slice(0,10))<=1&&!(o.bankIds||[]).some(b=>!String(b).startsWith('ck:')))
+          .sort((a,b)=>pri(a)-pri(b)||days(a.date,op.date)-days(b.date,op.date));
+        if(cs.length){used.add(cs[0].id);out.push({op,action:'convert',target:cs[0].id,from:dir==='out'?cardAcc:pairAcc,to:dir==='out'?pairAcc:cardAcc});continue;}
+        out.push({op,action:'transfer',from:dir==='out'?cardAcc:pairAcc,to:dir==='out'?pairAcc:cardAcc});continue;}
       if(ownAcc&&ownAcc!==cardAcc){out.push({op,action:'transfer',from:dir==='in'?ownAcc:cardAcc,to:dir==='in'?cardAcc:ownAcc});continue;}}
     const c=isCash(op);
     if(c==='in') out.push({op,action:'transfer',from:cashAcc,to:cardAcc});

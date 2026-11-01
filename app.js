@@ -81,9 +81,18 @@ function blackFor(cardId){const c=S.accounts.find(a=>a.id===cardId);if(!c||/blac
   const id=cardId==='mama_t'?'mama_black':cardId==='anya_t'?'anya_black':cardId+'_black';
   return S.accounts.find(a=>a.id===id)||{id,name:c.name.split(/\s+/)[0]+' Black',kind:'card',icon:'🖤',color:'#222',initial:0,cardMask:'',order:50,_new:1};}
 async function ensureAcc(a){if(a&&a._new){delete a._new;await put('accounts',a);S.accounts=await all('accounts');}return a&&a.id;}
-const ownOps=()=>S.ops.filter(o=>(o.type==='income'||o.type==='expense')&&Core.OWN.test(o.note||'')&&blackFor(o.accountId));
-async function migrateOwn(){const xs=ownOps();if(!xs.length)return;if(!confirm('Перенести '+xs.length+' операций «между своими счетами» в переводы с/на Black?'))return;
-  for(const o of xs){const b=await ensureAcc(blackFor(o.accountId));await put('ops',Core.ownToTransfer(o,b));}
+const ownOps=()=>S.ops.filter(o=>(o.type==='income'||o.type==='expense')&&Core.OWN.test(o.note||'')&&(blackFor(o.accountId)||pairOf(o.accountId)));
+async function migrateOwn(){const xs=ownOps();if(!xs.length)return;if(!confirm('Исправить '+xs.length+' операций «между своими счетами»: сделать переводами карта ⇄ Black (совпадающие записи объединятся)?'))return;
+  const gone=new Set();
+  // ops on a Black wallet (from its statement): merge with the paired card's record of the same money, else make a transfer
+  for(const o of xs.filter(o=>pairOf(o.accountId))){const card=pairOf(o.accountId),want=o.type==='expense'?'income':'expense',d=o.date.slice(0,10);
+    const cs=S.ops.filter(x=>!gone.has(x.id)&&x.id!==o.id&&x.type===want&&x.accountId===card&&Math.abs(x.amount-o.amount)<0.005&&Math.abs(new Date(x.date.slice(0,10))-new Date(d))<=864e5)
+      .sort((p,q)=>(Core.OWN.test(q.note||'')-Core.OWN.test(p.note||''))||((q.category==='Прочее')-(p.category==='Прочее')));
+    const t=o.type==='expense'?{accountId:o.accountId,toAccountId:card}:{accountId:card,toAccountId:o.accountId};
+    if(cs.length){const x=cs[0];gone.add(x.id);await put('ops',{...x,type:'transfer',category:'',...t,bankIds:[...(x.bankIds||[]),...(o.bankIds||[])],sides:[card,o.accountId]});
+      gone.add(o.id);await put('ops',{id:o.id,deleted:true});}
+    else await put('ops',{...o,type:'transfer',category:'',...t,sides:[o.accountId]});}
+  for(const o of xs.filter(o=>!pairOf(o.accountId)&&!gone.has(o.id))){const b=await ensureAcc(blackFor(o.accountId));await put('ops',Core.ownToTransfer(o,b));}
   S.ops=await all('ops');toast('Перенесено: '+xs.length);refresh();show('import');}
 function opMatch(k,id){if(k==='inc'){const n=itemOf('inc',id).name;return o=>o.type==='income'&&o.category===n;}
   if(k==='exp'){const n=itemOf('exp',id).name;return o=>o.type==='expense'&&o.category===n;}
@@ -296,7 +305,7 @@ function ssToReview(){const rows=ssRows.filter(r=>r.amount&&r.date).map(r=>({...
 // ---- CoinKeeper import ----
 let CK=null;
 const ckSkipped=()=>JSON.parse(localStorage.ckSkipped||'[]');
-const APP_VER='v15';
+const APP_VER='v16';
 let CKB=[];try{CKB=JSON.parse(localStorage.ckBanks||'[]');}catch(e){CKB=[];}
 function ckbStatus(){const el=$('#ckb');if(!el)return;el.innerHTML=CKB.length?'✅ Выписки загружены: '+CKB.map(b=>esc((b.accountId?accName(b.accountId):b.name)+' ('+b.ops.length+' операций)')).join(', ')+' <button class="b s" onclick="CKB=[];localStorage.removeItem(\'ckBanks\');ckbStatus();if(CK){CK=Core.planCoinKeeper(CK.items.map(i=>i.row),{accounts:S.accounts,cats:S.cats,ops:S.ops,skipped:ckSkipped()});CK.items.forEach(i=>{i.accept=i.action===\'add\'||i.action===\'link\'});renderCK();}">Сбросить</button>':'<span class="neg">⚠️ Выписки не загружены — подсказок банка не будет. Сначала нажмите кнопку выше.</span>';}
 async function ckBanks(files){CKB=[];for(const f of files){const r=Core.parseTBank(Core.decode(await f.arrayBuffer()));if(r.ops.length)CKB.push({name:f.name,ops:r.ops});}
