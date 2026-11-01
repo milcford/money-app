@@ -112,8 +112,10 @@ function circ(kind,item,amt){const cls=kind==='inc'?'inc':kind==='exp'?'exp':'ac
   const style=kind==='acc'||item.color&&item.color!==COLORS[kind]?`background:${item.color}`:'';
   return `<div class="c ${cls}" data-k="${kind}" data-id="${item.id}"><div class="lbl">${esc(item.name)}</div><div class="ic" style="${style}">${esc(item.icon||'•')}</div><div class="amt">${fmt(amt)}</div>${kind==='acc'&&item.credit?`<div class="mut" style="font-size:10px;text-align:center">${item.limit?'доступно '+fmt(+item.limit+(amt||0)):(amt<0?'долг':'')}</div>`:''}</div>`;}
 const addCirc=k=>`<div class="c add" data-k="add" data-add="${k}"><div class="lbl">.</div><div class="ic">＋</div><div class="amt"> </div></div>`;
-function pager(items,per,id){const pages=[];for(let i=0;i<items.length;i+=per)pages.push(items.slice(i,i+per));if(!pages.length)pages.push([]);
-  return `<div class="pager" id="${id}" onscroll="dots(this)">${pages.map(p=>`<div class="page">${p.join('')}</div>`).join('')}</div><div class="dots">${pages.length>1?pages.map((_,i)=>`<i class="${i?'':'on'}"></i>`).join(''):''}</div>`;}
+const COLS=()=>Math.max(4,Math.min(12,Math.floor(((document.querySelector('main')||document.body).clientWidth||360)/105)));
+let _cols=0;addEventListener('resize',()=>{if(COLS()!==_cols&&cur==='home')show('home');});
+function pager(items,per,id){const cols=_cols=COLS();per=per/4*cols;const pages=[];for(let i=0;i<items.length;i+=per)pages.push(items.slice(i,i+per));if(!pages.length)pages.push([]);
+  return `<div class="pager" id="${id}" onscroll="dots(this)">${pages.map(p=>`<div class="page" style="grid-template-columns:repeat(${cols},1fr)">${p.join('')}</div>`).join('')}</div><div class="dots">${pages.length>1?pages.map((_,i)=>`<i class="${i?'':'on'}"></i>`).join(''):''}</div>`;}
 function dots(el){const i=Math.round(el.scrollLeft/el.clientWidth);el.nextElementSibling.querySelectorAll('i').forEach((d,j)=>d.classList.toggle('on',i===j));}
 const views={
 recon(){reconSheet();},
@@ -349,7 +351,7 @@ function ssToReview(){const rows=ssRows.filter(r=>r.amount&&r.date).map(r=>({...
 // ---- CoinKeeper import ----
 let CK=null;
 const ckSkipped=()=>JSON.parse(localStorage.ckSkipped||'[]');
-const APP_VER='v19';
+const APP_VER='v20';
 let CKB=[];try{CKB=JSON.parse(localStorage.ckBanks||'[]');}catch(e){CKB=[];}
 function ckbStatus(){const el=$('#ckb');if(!el)return;el.innerHTML=CKB.length?'✅ Выписки загружены: '+CKB.map(b=>esc((b.accountId?accName(b.accountId):b.name)+' ('+b.ops.length+' операций)')).join(', ')+' <button class="b s" onclick="CKB=[];localStorage.removeItem(\'ckBanks\');ckbStatus();if(CK){CK=Core.planCoinKeeper(CK.items.map(i=>i.row),{accounts:S.accounts,cats:S.cats,ops:S.ops,skipped:ckSkipped()});CK.items.forEach(i=>{i.accept=i.action===\'add\'||i.action===\'link\'});renderCK();}">Сбросить</button>':'<span class="neg">⚠️ Выписки не загружены — подсказок банка не будет. Сначала нажмите кнопку выше.</span>';}
 async function ckBanks(files){CKB=[];for(const f of files){const r=Core.parseTBank(Core.decode(await f.arrayBuffer()));if(r.ops.length)CKB.push({name:f.name,ops:r.ops});}
