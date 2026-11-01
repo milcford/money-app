@@ -1,0 +1,2 @@
+{"name":"money-sync-server","version":"1.0.0","private":true,"main":"server.js","engines":{"node":">=22.13"},
+ "scripts":{"start":"node server.js","hash":"node server.js hash"},"dependencies":{"bcryptjs":"^2.4.3"}}

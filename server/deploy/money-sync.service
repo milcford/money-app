@@ -1,0 +1,31 @@
+[Unit]
+Description=Money app sync server
+After=network.target
+
+[Service]
+Type=simple
+User=money
+Group=money
+WorkingDirectory=/opt/money-sync
+EnvironmentFile=/etc/money-sync.env
+ExecStart=/usr/bin/node --max-old-space-size=32 --max-semi-space-size=1 /opt/money-sync/server.js
+Restart=on-failure
+RestartSec=5
+# resource limits for a small shared VPS
+MemoryHigh=80M
+MemoryMax=120M
+CPUQuota=50%
+Nice=5
+# hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+ReadWritePaths=/var/lib/money-sync
+
+[Install]
+WantedBy=multi-user.target

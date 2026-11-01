@@ -2,21 +2,53 @@
 let db;const S={accounts:[],ops:[],cats:[]};
 function openDB(){return new Promise((ok,no)=>{const r=indexedDB.open('money',1);r.onupgradeneeded=()=>{const d=r.result;['accounts','ops','cats'].forEach(s=>d.createObjectStore(s,{keyPath:'id'}));};r.onsuccess=()=>ok(r.result);r.onerror=no;});}
 const tx=(s,m='readonly')=>db.transaction(s,m).objectStore(s);
-const all=s=>new Promise(ok=>{const r=tx(s).getAll();r.onsuccess=()=>ok(r.result);});
-const put=(s,o)=>new Promise(ok=>{const r=tx(s,'readwrite').put(o);r.onsuccess=ok;});
-const del=(s,id)=>new Promise(ok=>{const r=tx(s,'readwrite').delete(id);r.onsuccess=ok;});
+// records carry updatedAt + _dirty (unsynced) ; deletes are tombstones {id,deleted:true} so they sync to other devices
+const raw=s=>new Promise(ok=>{const r=tx(s).getAll();r.onsuccess=()=>ok(r.result);});
+const all=async s=>(await raw(s)).filter(x=>!x.deleted);
+const putRaw=(s,o)=>new Promise(ok=>{const r=tx(s,'readwrite').put(o);r.onsuccess=ok;});
+const put=(s,o)=>{o.updatedAt=Math.max(Date.now(),(o.updatedAt||0)+1);o._dirty=1;scheduleSync();return putRaw(s,o);};
+const del=(s,id)=>put(s,{id,deleted:true});
 const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,7);
 const byOrder=(a,b)=>(a.order??0)-(b.order??0);
 const COLORS={inc:'#2c4a9a',cash:'#c9a84c',savings:'#4caf72',card:'#4a3b1c',exp:'#0d2626'};
 const PALETTE=['#2c4a9a','#c9a84c','#4caf72','#4a3b1c','#0d2626','#8e44ad','#c0392b','#16a085','#d35400','#555'];
-async function load(){for(const s of ['accounts','ops','cats'])S[s]=await all(s);
-  if(!S.accounts.length){let i=0;for(const[id,name,kind,icon]of[['cash','Наличные','cash','👛'],['saved','Отложенные','savings','👛'],['anya_t','Аня Тинькофф','card','💳'],['mama_t','Мама Тинькофф','card','💳']])
-    await put('accounts',{id,name,kind,icon,color:COLORS[kind],initial:0,cardMask:'',order:i++});S.accounts=await all('accounts');}
-  if(!S.cats.length){let i=0;
-    for(const[n,ic]of[['Доход','💵'],['Аня','🛒'],['ЗП','🛒'],['Прочее','🛒']])await put('cats',{id:uid(),name:n,income:true,icon:ic,color:COLORS.inc,order:i++});
+async function load(){
+  // migrate pre-sync records
+  for(const st of ['accounts','ops','cats'])for(const r of await raw(st))if(!r.updatedAt)await putRaw(st,{...r,updatedAt:Date.now(),_dirty:1});
+  // defaults use fixed ids and updatedAt=1 so any real edit (on any device) wins and devices don't duplicate them
+  const seed=(st,o)=>putRaw(st,{...o,updatedAt:1,_dirty:1});
+  if(!(await raw('accounts')).length){let i=0;for(const[id,name,kind,icon]of[['cash','Наличные','cash','👛'],['saved','Отложенные','savings','👛'],['anya_t','Аня Тинькофф','card','💳'],['mama_t','Мама Тинькофф','card','💳']])
+    await seed('accounts',{id,name,kind,icon,color:COLORS[kind],initial:0,cardMask:'',order:i++});}
+  if(!(await raw('cats')).length){let i=0,j=0;
+    for(const[n,ic]of[['Доход','💵'],['Аня','🛒'],['ЗП','🛒'],['Прочее','🛒']])await seed('cats',{id:'inc_'+j++,name:n,income:true,icon:ic,color:COLORS.inc,order:i++});j=0;
     for(const[n,ic]of[['Продукты','🧃'],['Развлечения','🎞️'],['Транспорт','🚌'],['Еда вне дома','🥤'],['Покупки','🛍️'],['Прочее','🛒'],['Пивной','🍺'],['Кальян','💨'],['Ремонт','🏠'],['на чай','🪙'],['Валенсия','✈️'],['парикмахерская','💇']])
-      await put('cats',{id:uid(),name:n,income:false,icon:ic,color:COLORS.exp,order:i++});S.cats=await all('cats');}
-  S.accounts.sort(byOrder);S.cats.sort(byOrder);}
+      await seed('cats',{id:'exp_'+j++,name:n,income:false,icon:ic,color:COLORS.exp,order:i++});}
+  for(const st of ['accounts','ops','cats'])S[st]=await all(st);S.accounts.sort(byOrder);S.cats.sort(byOrder);}
+// ---- sync ----
+let syncing=false,syncAgain=false,syncTimer=null,syncMsg='';
+const syncUrl=()=>(localStorage.syncUrl||'').replace(/\/+$/,'');
+function scheduleSync(){clearTimeout(syncTimer);syncTimer=setTimeout(runSync,1500);}
+function syncLabel(){if(!syncUrl())return '';if(!localStorage.syncToken)return '⚠ войдите в синхронизацию';if(syncMsg)return syncMsg;
+  const t=+localStorage.syncAt;return t?'☁ '+new Date(t).toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'}):'☁';}
+function setSync(m){syncMsg=m;const e=document.getElementById('sync');if(e)e.textContent=syncLabel();}
+async function api(path,body,tok){const r=await fetch(syncUrl()+path,{method:'POST',headers:{'content-type':'application/json',...(tok?{authorization:'Bearer '+tok}:{})},body:JSON.stringify(body||{})});
+  const j=await r.json().catch(()=>({}));if(r.status===401&&tok){localStorage.removeItem('syncToken');throw new Error('нужно войти заново');}if(!r.ok)throw new Error(j.error||('ошибка '+r.status));return j;}
+async function runSync(){if(!db||!syncUrl()||!localStorage.syncToken)return setSync('');if(syncing){syncAgain=true;return;}syncing=true;setSync('⟳ синхронизация…');
+  try{const r=await Sync.syncOnce({db:{raw,put:putRaw},cursor:+localStorage.syncCursor||0,request:b=>api('/api/sync',b,localStorage.syncToken)});
+    localStorage.syncCursor=r.cursor;localStorage.syncAt=Date.now();setSync('');if(r.applied)await refresh();}
+  catch(e){setSync(navigator.onLine===false?'офлайн':'⚠ '+e.message);}
+  syncing=false;if(syncAgain){syncAgain=false;runSync();}}
+setInterval(runSync,60000);addEventListener('online',runSync);document.addEventListener('visibilitychange',()=>{if(!document.hidden)runSync();});
+function syncSheet(){openSheet(`<b>Синхронизация между устройствами</b><p class="mut">Данные хранятся на телефоне и работают без интернета; при наличии сети изменения отправляются на ваш сервер.</p>
+  <label class="mut">Адрес сервера (https)</label><input id="sy_url" placeholder="https://example.ru/money" value="${esc(localStorage.syncUrl||'')}" autocapitalize="off" autocorrect="off">
+  ${localStorage.syncToken?`<div class="mut">Вход выполнен. ${esc(syncLabel())}</div><button class="b" onclick="closeSheet();runSync()">Синхронизировать сейчас</button><button class="b r" onclick="syncLogout()">Выйти</button>`:
+  `<label class="mut">Пароль</label><input id="sy_pw" type="password" autocomplete="current-password"><button class="b" onclick="syncLogin()">Войти</button>`}
+  <div id="sy_err" class="neg"></div><button class="b s" onclick="closeSheet()">Закрыть</button>`);}
+async function syncLogin(){const u=$('#sy_url').value.trim().replace(/\/+$/,'');if(!/^https?:\/\//.test(u))return $('#sy_err').textContent='Укажите адрес, начинающийся с https://';
+  if(u!==localStorage.syncUrl){localStorage.syncUrl=u;localStorage.syncCursor=0;}
+  try{const {token}=await api('/api/login',{password:$('#sy_pw').value});localStorage.syncToken=token;localStorage.syncCursor=0;closeSheet();toast('Вход выполнен');runSync();header();}
+  catch(e){$('#sy_err').textContent=e.message==='Failed to fetch'?'Сервер недоступен':e.message;}}
+async function syncLogout(){try{await api('/api/logout',{},localStorage.syncToken);}catch{}localStorage.removeItem('syncToken');closeSheet();header();}
 // ---- helpers ----
 const $=s=>document.querySelector(s),V=$('#view');
 const fmt=n=>(Math.round((n||0)*100)/100).toLocaleString('ru-RU',{maximumFractionDigits:2})+' ₽';
@@ -31,7 +63,7 @@ function closeSheet(){$('#sheet').classList.remove('open');$('#sheetbg').style.d
 function monthSums(m){const r={inc:0,exp:0,byCat:{},byInc:{}};for(const o of S.ops){if(!o.date.startsWith(m))continue;
   if(o.type==='expense'){r.exp+=o.amount;r.byCat[o.category]=(r.byCat[o.category]||0)+o.amount;}else if(o.type==='income'){r.inc+=o.amount;r.byInc[o.category]=(r.byInc[o.category]||0)+o.amount;}}return r;}
 function header(){const m=monthSums(month()),b=Core.balances(S.accounts,S.ops);const tot=S.accounts.filter(a=>a.kind!=='savings').reduce((x,a)=>x+b[a.id],0);
-  $('#top').innerHTML=`<div class="prof" onclick="renameProfile()">${esc(localStorage.profile||'Мои финансы')} ⌄</div>
+  $('#top').innerHTML=`<div class="prof" onclick="renameProfile()">${esc(localStorage.profile||'Мои финансы')} ⌄</div><div id="sync" onclick="syncSheet()" style="position:absolute;right:14px;top:calc(env(safe-area-inset-top) + 12px);font-size:12px;color:#9ab">${esc(syncLabel())}</div>
   <div class="figs"><div><b>Расходы</b><span>${fmt(m.exp)}</span></div><div><b>Баланс</b><span>${fmt(tot)}</span></div><div><b>Доходы</b><span>${fmt(m.inc)}</span></div></div>`;
   const n=S.ops.filter(o=>o.reviewed===false).length,bd=$('#badge');bd.textContent=n;bd.style.display=n?'block':'none';}
 function renameProfile(){const n=prompt('Название',localStorage.profile||'Мои финансы');if(n){localStorage.profile=n;header();}}
@@ -78,7 +110,7 @@ function hrow(o){const[ic,col]=opIcon(o);const t=o.type==='transfer'?`${accName(
 async function markAll(){for(const o of S.ops)if(o.reviewed===false){o.reviewed=true;await put('ops',o);}refresh();}
 function menu(){openSheet(`<b>Меню</b><button class="b s" onclick="closeSheet();show('import')">Импорт CSV / скриншоты</button>
   <button class="b s" onclick="exportJSON()">Скачать резервную копию (JSON)</button><label class="b s">Восстановить из JSON<input type="file" accept=".json" hidden onchange="importJSON(this.files[0])"></label>
-  <button class="b s" onclick="closeSheet();renameProfile()">Название профиля</button><button class="b s" onclick="closeSheet()">Закрыть</button>`);}
+  <button class="b s" onclick="syncSheet()">☁ Синхронизация</button><button class="b s" onclick="closeSheet();renameProfile()">Название профиля</button><button class="b s" onclick="closeSheet()">Закрыть</button>`);}
 // ---- operation sheet with numpad ----
 let E=null;
 function opSheet(o){E={type:'expense',amount:'',accountId:S.accounts[0].id,toAccountId:(S.accounts[1]||S.accounts[0]).id,category:'',date:today(),note:'',...o};
@@ -211,5 +243,5 @@ let cur='home';
 function show(v,arg){cur=v;document.querySelectorAll('#bar nav button').forEach(b=>b.classList.toggle('on',b.dataset.v===v||(v==='import'&&b.dataset.v==='history')));header();views[v](arg);window.scrollTo(0,0);}
 document.querySelectorAll('#bar nav button').forEach(b=>b.onclick=()=>show(b.dataset.v));
 $('#plus').onclick=()=>opSheet({type:'expense'});
-openDB().then(d=>{db=d;return load();}).then(()=>show('home'));
+openDB().then(d=>{db=d;return load();}).then(()=>{show('home');runSync();});
 if('serviceWorker'in navigator)navigator.serviceWorker.register('sw.js');
