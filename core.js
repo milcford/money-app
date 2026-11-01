@@ -299,33 +299,26 @@ function planJetlend(p,existing,jl){const known=new Set();existing.forEach(o=>(o
   for(const d of p.deposits){if(known.has(d.bankId)){items.push({kind:'dup',d});continue;}const abs=Math.abs(d.amount);
     const t=existing.find(o=>!used.has(o.id)&&o.type==='transfer'&&(d.amount>0?o.toAccountId===jl:o.accountId===jl)&&Math.abs(o.amount-abs)<0.005&&days(o.date.slice(0,10),d.date.slice(0,10))<=3);
     if(t){used.add(t.id);items.push({kind:'link',d,target:t.id});}else items.push({kind:'add',d});}
-  const dly={};existing.forEach(o=>!o.deleted&&(o.bankIds||[]).forEach(b=>{const d=b.match(/^jl:d:(\d{4}-\d{2})-\d{2}$/);if(d)dly[d[1]]=(dly[d[1]]||0)+(o.type==='income'?o.amount:-o.amount);}));
+  const dly={};existing.forEach(o=>!o.deleted&&(o.bankIds||[]).forEach(b=>{const d=b.match(/^jl:[ds]:(\d{4}-\d{2})-\d{2}$/);if(d)dly[d[1]]=(dly[d[1]]||0)+(o.type==='income'?o.amount:-o.amount);}));
   for(const m of Object.keys(p.monthly).sort()){const v=Math.round((p.monthly[m]-(dly[m]||0))*100)/100;const to=(p.monthTo||{})[m];const ex=existing.find(o=>(o.bankIds||[]).includes('jl:m:'+m));
     if(ex){if(Math.abs((ex.type==='income'?ex.amount:-ex.amount)-v)>=0.005)items.push({kind:'yield',m,v,to,target:ex.id});}else if(Math.abs(v)>=0.005)items.push({kind:'yield',m,v,to});}
   return items;}
-// ---------- JetLend screenshot (OCR text) -> daily interest income ----------
-// tolerant: date headers ("30 октября", "30.10.2025", "Сегодня"/"Вчера") set the day; "Платеж по займу ... 4,08 ₽" lines are summed per day;
-// a summary line ("доход за день", "начислено сегодня", "доход сегодня") wins over the sum for its day
-function parseJetlendShot(text,today=new Date()){const z=x=>String(x).padStart(2,'0'),iso=d=>`${d.getFullYear()}-${z(d.getMonth()+1)}-${z(d.getDate())}`;
-  const td=iso(today),yd=iso(new Date(today.getFullYear(),today.getMonth(),today.getDate()-1));let cur=null,pend=false;const lines=[],pay={},sum={};
-  const dateOf=l=>{let m=l.match(/\b(\d{1,2})\.(\d{1,2})(?:\.(\d{2,4}))?\b(?![.,]\d)/);if(m&&+m[2]<=12&&+m[1]<=31){let y=m[3]?(+m[3]<100?2000+ +m[3]:+m[3]):today.getFullYear();let d=`${y}-${z(m[2])}-${z(m[1])}`;if(!m[3]&&d>td)d=`${y-1}-${z(m[2])}-${z(m[1])}`;return d;}
-    m=l.toLowerCase().match(/\b(\d{1,2})\s+([а-яё]+)(?:\s+(\d{4}))?/);if(m){const mi=MONTHS.findIndex(p=>m[2].startsWith(p)&&(p!=='ма'||/^ма[яй]/.test(m[2])));if(mi>=0&&+m[1]<=31){let y=+m[3]||today.getFullYear();let d=`${y}-${z(mi+1)}-${z(m[1])}`;if(!m[3]&&d>td)d=`${y-1}-${z(mi+1)}-${z(m[1])}`;return d;}}
-    if(/сегодня/i.test(l))return td;if(/вчера/i.test(l))return yd;return null;};
-  const amtOf=l=>{const m=[...l.replace(/(\d)\s(?=\d{3}\b)/g,'$1').matchAll(/([+\-−–]?)\s?(\d+(?:[.,]\d{1,2})?)\s*(?:₽|р\b|руб|Р\b|P\b|8\b(?=\s*$))/g)];if(!m.length)return null;const x=m[m.length-1];const v=num(x[2]);return v==null?null:(/[\-−–]/.test(x[1])?-v:v);};
-  for(const raw of String(text||'').split(/\n/)){const l=raw.trim();if(!l)continue;const d=dateOf(l),a=amtOf(l);let kind='other';
-    if(/до[хx]од\s*(за\s*день|сегодня|за\s*сутки)|начислено|за\s*день/i.test(l)&&a!=null){kind='summary';const day=d||cur||td;sum[day]=Math.round(((sum[day]||0)+a)*100)/100;}
-    else if(/плат[её]ж|погашен|процент|бонус/i.test(l)&&a!=null){kind='pay';const day=d||cur||td;pay[day]=Math.round(((pay[day]||0)+a)*100)/100;}
-    else if(d&&a==null){kind='date';cur=d;}
-    else if(a!=null&&(pend||/^[+]/.test(l))){kind='pay';cur=cur||td;pay[cur]=Math.round(((pay[cur]||0)+a)*100)/100;}
-    pend=a==null&&/плат[её]ж|бонус/i.test(l);lines.push({text:l,kind,date:kind==='pay'||kind==='summary'?(d||cur||td):d,amount:a});}
-  const days={};Object.keys(pay).forEach(d=>days[d]={v:pay[d],src:'pay'});Object.keys(sum).forEach(d=>days[d]={v:sum[d],src:'summary'});return {lines,days};}
-// plan daily records 'jl:d:YYYY-MM-DD' vs existing (daily -> update if larger amount seen; month from XLSX covering the day -> unchecked "already counted")
-function planJetlendDays(days,existing,jl){const items=[];const live=existing.filter(o=>!o.deleted);
-  for(const d of Object.keys(days).sort()){const v=days[d].v;const ex=live.find(o=>(o.bankIds||[]).includes('jl:d:'+d));
-    const mo=live.find(o=>(o.bankIds||[]).includes('jl:m:'+d.slice(0,7)));const covered=mo&&(!mo.jlTo||d<=mo.jlTo);
-    if(ex){const cur=ex.type==='income'?ex.amount:-ex.amount;if(Math.abs(cur-v)>=0.005)items.push({d,v,src:days[d].src,target:ex.id,old:cur,accept:Math.abs(v)>Math.abs(cur)});continue;}
-    items.push({d,v,src:days[d].src,covered:!!covered,accept:!covered&&Math.abs(v)>=0.005});}
-  return items;}
+// ---------- JetLend main screen snapshot (OCR text): portfolio value + "За все время" total gain ----------
+function parseJetlendMain(text){const A=/([+\-−–]?)\s*(\d{1,3}(?:[ \u00a0]\d{3})*|\d+)[,.](\d{2})\s*[₽PРp]?/;const val=m=>(/[\-−–]/.test(m[1])?-1:1)*+(m[2].replace(/\D/g,'')+'.'+m[3]);
+  const L=String(text||'').split(/\n/).map(l=>l.trim()).filter(Boolean);let value=null,total=null,pct=null,vi=-1,ti=-1;
+  L.forEach((l,i)=>{if(total==null&&/вс[её]\s*время/i.test(l)){const m=l.replace(/^.*?время/i,'').match(A)||(L[i+1]||'').match(A);if(m){total=val(m);ti=i;const p=l.match(/\(\s*([+\-−–]?\d+[,.]\d+)\s*%/);if(p)pct=num(p[1].replace(/[−–]/,'-'));}}});
+  // portfolio value: the big "123 456,78 ₽" line just above "За все время" (or the largest standalone amount)
+  const cand=L.map((l,i)=>{const m=/^[^\d+\-−–]{0,3}(\d{1,3}(?:[ \u00a0]\d{3})+|\d{2,})[,.](\d{2})\s*[₽PРp]?\s*$/.exec(l);return m?{i,v:+(m[1].replace(/\D/g,'')+'.'+m[2])}:null;}).filter(Boolean);
+  const near=cand.filter(c=>ti<0||(c.i<ti&&ti-c.i<=3));const pick=(near.length?near:cand).sort((a,b)=>b.v-a.v)[0];if(pick){value=pick.v;vi=pick.i;}
+  return {value,total,pct,lines:L.map((l,i)=>({text:l,kind:i===vi?'value':i===ti?'total':'other'}))};}
+// plan a snapshot vs previous ones (acc.jlSnaps) and XLSX months: income = total - previous total
+function planJetlendSnap(snap,snaps,existing){const prev=(snaps||[]).filter(x=>x.date<snap.date).sort((a,b)=>a.date<b.date?1:-1)[0]||null;
+  const same=(snaps||[]).find(x=>x.date===snap.date);const xlsxTo=existing.filter(o=>!o.deleted&&(o.bankIds||[]).some(b=>/^jl:m:/.test(b))).map(o=>o.jlTo||((o.bankIds.find(b=>/^jl:m:/.test(b)).slice(5))+'-31')).sort().pop()||'';
+  if(!prev)return {prev:null,same,income:0,accept:false,why:'Первый снимок — запомню как точку отсчёта, доход посчитаю со следующего.',xlsxTo};
+  const from=prev.date,income=Math.round((snap.total-prev.total)*100)/100;
+  if(xlsxTo&&snap.date<=xlsxTo)return {prev,same,income,accept:false,from,why:`Период уже учтён выгрузкой XLSX (до ${xlsxTo}) — доход не добавляю.`,xlsxTo};
+  if(xlsxTo&&from<xlsxTo)return {prev,same,income,accept:false,from,why:`Часть периода (до ${xlsxTo}) уже есть в XLSX — проверьте сумму вручную.`,xlsxTo};
+  return {prev,same,income,accept:Math.abs(income)>=0.005,from,why:'',xlsxTo};}
 function parseYandexText(lines){const D=/(\d{2})\.(\d{2})\.(\d{4})/,AM=/([+\-−–]?)\s?(\d{1,3}(?:[ \u00a0\u202f]\d{3})*[.,]\d{2})\s*(?:₽|RUB|руб)/g;
   const END=/^(исходящий\s+остаток|всего\s+(расход|приход)|с уважением)/i;
   const JUNK=/^(продолжение на следующей|страница \d|описание операции|операции обработки|мск( мск)?$|исх\. №|выписка по|дата \d|ао «яндекс банк»|.*лицензия банка россии|.*паспорт рф|.*дата рождения|.*сообщает, что между|.*\(далее —)/i;
@@ -351,6 +344,6 @@ function parseYandexText(lines){const D=/(\d{2})\.(\d{2})\.(\d{4})/,AM=/([+\-−
     const t=l.match(/^в (\d{2}):(\d{2})$/);if(t){cur.date=cur.date.slice(0,11)+t[1]+':'+t[2]+':00';continue;}
     cur.desc+=' '+l;}
   flush();return {ops,skipped:0,errors:ops.length?[]:['Не удалось найти операции в выписке Яндекс Банка'],closing,totIn,totOut};}
-root.Core={parseJetlendShot,planJetlendDays,JL,jlDate,parseJetlend,planJetlend,moveOp,opCmp,shotTimes,cleanYandexDesc,parseYandexText,ownToTransfer,OWN,suggestCoinKeeper,guessBankAccount,bankKind,parseCoinKeeper,planCoinKeeper,decideOp,parseScreenshotText,screenshotIds,similar,decode,parseTBank,reconcile,balances,hash,isCash};
+root.Core={parseJetlendMain,planJetlendSnap,JL,jlDate,parseJetlend,planJetlend,moveOp,opCmp,shotTimes,cleanYandexDesc,parseYandexText,ownToTransfer,OWN,suggestCoinKeeper,guessBankAccount,bankKind,parseCoinKeeper,planCoinKeeper,decideOp,parseScreenshotText,screenshotIds,similar,decode,parseTBank,reconcile,balances,hash,isCash};
 if(typeof module!=='undefined')module.exports=root.Core;
 })(typeof self!=='undefined'?self:globalThis);

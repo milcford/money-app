@@ -291,7 +291,7 @@ function circMenu(k,id){const it=itemOf(k,id);if(!it)return;const bk=k==='acc'&&
   openSheet(`<b>${esc(it.icon||'')} ${esc(it.name)}</b>
   ${bk?`<label class="b s">📄 Загрузить выписку${ya?' (PDF)':' (CSV)'}<input type="file" accept="${ya?'.pdf,application/pdf':'.csv,text/csv'}" hidden onchange="closeSheet();accImport('${id}',this.files[0])"></label>
   <label class="b s">📷 Загрузить скриншоты<input type="file" accept="image/*" multiple hidden onchange="closeSheet();accShots('${id}',this.files)"></label>`:''}
-  ${k==='acc'&&(id==='jetlend'||/jet ?lend/i.test(it.name))?`<label class="b s">📄 Загрузить «Экспорт операций» JetLend (XLSX)<input type="file" accept=".xlsx,.xls" hidden onchange="closeSheet();jlImport('${id}',this.files[0])"></label><label class="b s">📷 Скриншот JetLend (доход за день)<input type="file" accept="image/*" multiple hidden onchange="closeSheet();jlShots('${id}',[...this.files])"></label>`:''}
+  ${k==='acc'&&(id==='jetlend'||/jet ?lend/i.test(it.name))?`<label class="b s">📄 Загрузить «Экспорт операций» JetLend (XLSX)<input type="file" accept=".xlsx,.xls" hidden onchange="closeSheet();jlImport('${id}',this.files[0])"></label><label class="b s">📷 Снимок главного экрана JetLend<input type="file" accept="image/*" hidden onchange="closeSheet();jlShots('${id}',[...this.files])"></label>`:''}
   <button class="b s" onclick="closeSheet();window._hf={k:'${k}',id:'${id}',m:PER};show('history')">Открыть в Истории</button>
   <button class="b s" onclick="closeSheet();editCirc('${k}','${id}')">✎ ${k==='acc'?'Изменить счёт / указать остаток':'Изменить'}</button>
   <button class="b s" onclick="closeSheet()">Отмена</button>`);}
@@ -373,23 +373,37 @@ async function applyJL(){const id=JLP.id;let cat=S.cats.find(c=>c.income&&c.name
    else{const o={type:i.v>=0?'income':'expense',amount:Math.abs(i.v),accountId:id,category:i.v>=0?'Jetlend доход':'Прочее',note:'JetLend доход за '+perLabel(i.m),jlTo:i.to||''};
      const t=i.target&&S.ops.find(x=>x.id===i.target);await put('ops',t?{...t,...o}:{id:uid(),...o,date:i.m+'-28T12:00:00',bankIds:['jl:m:'+i.m],reviewed:false});}n++;}
   JLP=null;S.ops=await all('ops');toast('Готово: '+n);afterImport();}
-// ---- JetLend screenshots -> daily interest income ----
+// ---- JetLend main-screen snapshot: portfolio value + "За все время" -> income since previous snapshot ----
 let JLS=null;
 async function jlEnsureCat(){let c=S.cats.find(c=>c.income&&c.name==='Jetlend доход');if(!c){c={id:'inc_jetlend',name:'Jetlend доход',income:true,icon:'📈',color:COLORS.inc,order:90};await put('cats',c);S.cats.push(c);}}
-async function jlShots(id,files){if(!files.length)return;show('import');FIX=id;const R=$('#review');R.innerHTML='<div class="card" id="jls_p">Загружаю распознавание…</div>';
+// green/blue text on dark: max channel, x2, invert (plain grayscale loses the green "За все время")
+async function prepMax(file){const img=await createImageBitmap(file);const c=document.createElement('canvas');c.width=img.width*2;c.height=img.height*2;const x=c.getContext('2d');x.imageSmoothingQuality='high';x.drawImage(img,0,0,c.width,c.height);
+  const d=x.getImageData(0,0,c.width,c.height),p=d.data;let s=0;for(let i=0;i<p.length;i+=4){const g=Math.max(p[i],p[i+1],p[i+2]);p[i]=p[i+1]=p[i+2]=g;s+=g;}
+  if(s/(p.length/4)<128)for(let i=0;i<p.length;i+=4)p[i]=p[i+1]=p[i+2]=255-p[i];x.putImageData(d,0,0);return c;}
+async function jlShots(id,files){if(!files.length)return;show('import');FIX=id;$('#review').innerHTML='<div class="card" id="jls_p">Загружаю распознавание…</div>';
   try{await loadTesseract();const w=await Tesseract.createWorker(['rus','eng'],1,{logger:m=>{if(m.status==='recognizing text')$('#jls_p').textContent=`Распознаю… ${Math.round(m.progress*100)}%`;}});
-    let text='';for(let i=0;i<files.length;i++){$('#jls_p').textContent=`Скриншот ${i+1} из ${files.length}…`;const {data}=await w.recognize(await prep(files[i]));text+=data.text+'\n';}
-    await w.terminate();window._lastOCR=text;const p=Core.parseJetlendShot(text);JLS={id,lines:p.lines,items:Core.planJetlendDays(p.days,S.ops,id)};renderJLS();
+    let r=null;for(const f of files){const {data}=await w.recognize(await prepMax(f));window._lastOCR=data.text;const p=Core.parseJetlendMain(data.text);if(!r||(p.total!=null&&r.total==null))r=p;}
+    await w.terminate();JLS={id,date:today().slice(0,10),...r};renderJLS();
   }catch(e){$('#jls_p').textContent='Ошибка: '+e.message;}}
-function renderJLS(){const K={pay:['💰','pos'],summary:['Σ','pos'],date:['📅','mut'],other:['·','mut']};
-  $('#review').innerHTML=`<div class="card"><b>Доход JetLend по дням</b><div class="mut">Поправьте сумму, если распознано неточно. Σ — итог дня со скриншота (важнее суммы платежей).</div>
-  ${JLS.items.length?JLS.items.map((x,i)=>`<div class="row"><input type="checkbox" style="width:auto" ${x.accept?'checked':''} onchange="JLS.items[${i}].accept=this.checked"><div style="flex:1">${esc(x.d.split('-').reverse().join('.'))} ${x.src==='summary'?'Σ':''}<div class="mut">${x.target?'уже было '+fmt(x.old)+' — обновить':x.covered?'месяц уже учтён из XLSX — не отмечено':''}</div></div><input type="number" step="0.01" inputmode="decimal" style="width:96px" value="${x.v}" onchange="JLS.items[${i}].v=+this.value"></div>`).join(''):'<div class="mut">Доход не найден. Пришлите такой скриншот разработчику — подстрою распознавание.</div>'}</div>
-  <div class="card"><b>Что распознано (${JLS.lines.length} строк)</b>${JLS.lines.map(l=>`<div class="${K[l.kind][1]}" style="font-size:12px">${K[l.kind][0]} ${esc(l.text)}${l.kind==='pay'||l.kind==='summary'?` → ${esc(l.date)} ${fmt(l.amount)}`:''}</div>`).join('')}</div>
-  <div id="rv_end"></div><div class="stick"><button class="b s" onclick="scrollEnd()">↓ Вниз</button><button class="b" id="rv_apply" data-lbl="Применить" onclick="applyJLS()">Применить</button></div>`;setTimeout(updApply);}
-async function applyJLS(){const id=JLS.id;let n=0;await jlEnsureCat();
-  for(const x of JLS.items){if(!x.accept||!x.v)continue;const o={type:x.v>=0?'income':'expense',amount:Math.abs(x.v),accountId:id,category:x.v>=0?'Jetlend доход':'Прочее',note:'JetLend доход за '+x.d.split('-').reverse().join('.')};
-    const t=x.target&&S.ops.find(q=>q.id===x.target);await put('ops',t?{...t,...o}:{id:uid(),...o,date:x.d+'T23:00:00',bankIds:['jl:d:'+x.d],reviewed:false});n++;}
-  JLS=null;S.ops=await all('ops');toast('Готово: '+n);afterImport();}
+function jlPlan(){const a=S.accounts.find(x=>x.id===JLS.id);return Core.planJetlendSnap({date:JLS.date,value:JLS.value,total:JLS.total},a.jlSnaps||[],S.ops);}
+function renderJLS(){const ok=JLS.value!=null&&JLS.total!=null,P=ok?jlPlan():null;if(P&&JLS.acc==null)JLS.acc=P.accept;if(JLS.bal==null)JLS.bal=true;
+  const bal=Core.balances(S.accounts,S.ops)[JLS.id]||0,f=(k,v)=>`<input type="number" step="0.01" inputmode="decimal" style="width:130px" value="${v??''}" onchange="JLS.${k}=this.value===''?null:+this.value;JLS.acc=null;renderJLS()">`;
+  $('#review').innerHTML=`<div class="card"><b>Снимок JetLend</b><div class="mut">Проверьте распознанные числа, при ошибке исправьте.</div>
+   <div class="row"><div style="flex:1">Дата снимка</div><input type="date" value="${JLS.date}" onchange="JLS.date=this.value;JLS.acc=null;renderJLS()"></div>
+   <div class="row"><div style="flex:1">Портфель</div>${f('value',JLS.value)}</div><div class="row"><div style="flex:1">За все время</div>${f('total',JLS.total)}</div></div>
+  ${!ok?'<div class="card neg">Не нашёл сумму портфеля или «За все время». Нужен скриншот главного экрана JetLend (блок «Портфель №1»); или впишите числа вручную.</div>':`
+  <div class="card">${P.prev?`<div class="mut">Прошлый снимок ${esc(P.prev.date)}: за все время ${fmt(P.prev.total)}</div>`:''}${P.why?`<div class="mut">${esc(P.why)}</div>`:''}
+   ${P.prev?`<label class="row"><input type="checkbox" style="width:auto" ${JLS.acc?'checked':''} onchange="JLS.acc=this.checked"><div style="flex:1">Записать доход за ${esc(P.from)} – ${esc(JLS.date)}</div><b class="${P.income<0?'neg':'pos'}">${fmt(P.income)}</b></label>`:''}
+   <label class="row"><input type="checkbox" style="width:auto" ${JLS.bal?'checked':''} onchange="JLS.bal=this.checked"><div style="flex:1">Выставить баланс Jetlend = портфель<div class="mut">сейчас в приложении ${fmt(bal)}</div></div><b>${fmt(JLS.value)}</b></label>${P.same?'<div class="mut">Снимок за эту дату уже есть — заменю его.</div>':''}</div>`}
+  <div class="card"><b>Что распознано</b>${(JLS.lines||[]).map(l=>`<div class="${l.kind==='other'?'mut':'pos'}" style="font-size:12px">${l.kind==='value'?'💼 ':l.kind==='total'?'📈 ':''}${esc(l.text)}</div>`).join('')}</div>
+  <div class="stick"><button class="b" ${ok?'':'disabled'} onclick="applyJLS()">Сохранить снимок</button></div>`;}
+async function applyJLS(){const id=JLS.id,P=jlPlan(),a=S.accounts.find(x=>x.id===id);let n=0;
+  if(JLS.acc&&P.prev&&Math.abs(P.income)>=0.005){await jlEnsureCat();const k='jl:s:'+JLS.date,ex=S.ops.find(o=>!o.deleted&&(o.bankIds||[]).includes(k));
+    const o={type:P.income>=0?'income':'expense',amount:Math.abs(P.income),accountId:id,category:P.income>=0?'Jetlend доход':'Прочее',note:`JetLend доход ${P.from} – ${JLS.date}`};
+    await put('ops',ex?{...ex,...o}:{id:uid(),...o,date:JLS.date+'T23:00:00',bankIds:[k],reviewed:true});n++;}
+  const snaps=(a.jlSnaps||[]).filter(x=>x.date!==JLS.date).concat([{date:JLS.date,value:JLS.value,total:JLS.total}]).sort((x,y)=>x.date<y.date?-1:1);
+  await put('accounts',{...a,jlSnaps:snaps});S.accounts=await all('accounts');S.ops=await all('ops');
+  if(JLS.bal&&await setBalance(id,JLS.value))n++;JLS=null;toast('Снимок сохранён'+(n?', операций: '+n:''));afterImport();}
 // ---- screenshot import (client-side OCR) ----
 let ssRows=[],ssAcc='tbank';
 function loadTesseract(){return window.Tesseract?Promise.resolve():new Promise((ok,no)=>{const sc=document.createElement('script');sc.src='https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';sc.onload=ok;sc.onerror=()=>no(new Error('Не удалось загрузить модуль распознавания (нужен интернет при первом запуске)'));document.head.appendChild(sc);});}
@@ -419,7 +433,7 @@ function ssToReview(){const rows=ssRows.filter(r=>r.amount&&r.date).map(r=>({...
 // ---- CoinKeeper import ----
 let CK=null;
 const ckSkipped=()=>JSON.parse(localStorage.ckSkipped||'[]');
-const APP_VER='v33';
+const APP_VER='v34';
 let CKB=[];try{CKB=JSON.parse(localStorage.ckBanks||'[]');}catch(e){CKB=[];}
 function ckbStatus(){const el=$('#ckb');if(!el)return;el.innerHTML=CKB.length?'✅ Выписки загружены: '+CKB.map(b=>esc((b.accountId?accName(b.accountId):b.name)+' ('+b.ops.length+' операций)')).join(', ')+' <button class="b s" onclick="CKB=[];localStorage.removeItem(\'ckBanks\');ckbStatus();if(CK){CK=Core.planCoinKeeper(CK.items.map(i=>i.row),{accounts:S.accounts,cats:S.cats,ops:S.ops,skipped:ckSkipped()});CK.items.forEach(i=>{i.accept=i.action===\'add\'||i.action===\'link\'});renderCK();}">Сбросить</button>':'<span class="neg">⚠️ Выписки не загружены — подсказок банка не будет. Сначала нажмите кнопку выше.</span>';}
 async function ckBanks(files){CKB=[];for(const f of files){const r=Core.parseTBank(Core.decode(await f.arrayBuffer()));if(r.ops.length)CKB.push({name:f.name,ops:r.ops});}
