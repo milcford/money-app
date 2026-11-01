@@ -93,17 +93,17 @@ history(){const list=[...S.ops].sort((a,b)=>b.date.localeCompare(a.date));const 
   ${n?`<div class="card" style="display:flex;justify-content:space-between;align-items:center"><span>Новых из банка: <b>${n}</b></span><button class="b s" style="width:auto;margin:0;font-size:14px" onclick="markAll()">Всё верно</button></div>`:''}
   ${Object.entries(g).map(([d,ops])=>{const sum=ops.reduce((x,o)=>x+(o.type==='expense'?-o.amount:o.type==='income'?o.amount:0),0);
    return `<div class="dayh"><span>${new Date(d).toLocaleDateString('ru-RU',{day:'numeric',month:'long',weekday:'short'})}</span><span>${fmt(sum)}</span></div>${ops.map(hrow).join('')}`;}).join('')||'<div class="card mut">Пока пусто. Перетащите кружок на главном экране или загрузите выписку.</div>'}`;},
-import(){V.innerHTML=`<div class="hdr"><h2>Импорт</h2><button onclick="show('history')">‹ Назад</button></div>
-  <div class="card"><b>1. Выписка Т‑Банка (CSV)</b><p class="mut">В приложении Т‑Банка: Счёт → Выписка → CSV. Повторная или пересекающаяся выписка дублей не создаст.</p>
+import(){V.innerHTML=`<div class="hdr"><h2>Импорт <span class="mut" style="font-size:13px">версия ${APP_VER}</span></h2><button onclick="show('history')">‹ Назад</button></div>
+  <div class="card"><b>1. Выписка Т‑Банка (CSV)</b><p class="mut">В приложении Т‑Банка: Счёт → Выписка → CSV. Повторная или пересекающаяся выписка дублей не создаст. <b>Это добавляет операции банка в приложение.</b> Для переноса из CoinKeeper используйте блок 3, а не этот.</p>${(()=>{const n=S.ops.filter(o=>(o.bankIds||[]).some(b=>!String(b).startsWith('ck:'))&&!(o.bankIds||[]).some(b=>String(b).startsWith('ck:'))).length;return n?`<div class="mut">Сейчас в приложении операций из выписок: ${n}. <button class="b s" onclick="delBankOps()">Удалить их</button></div>`:'';})()}
   <label class="mut">Если в файле нет номера карты — на какой счёт</label><select id="csv_acc">${S.accounts.filter(a=>a.kind==='card').map(a=>`<option value="${a.id}">${esc(a.name)}</option>`).join('')}</select>
   <label class="b">Выбрать CSV<input type="file" accept=".csv,text/csv" hidden onchange="doImport(this.files[0])"></label></div>
   <div class="card"><b>2. Скриншоты списка операций</b><p class="mut">Скриншоты экрана «Операции» Т‑Банка, можно несколько. Распознавание идёт на телефоне.</p>
   <label class="mut">На какой счёт</label><select id="ss_acc">${S.accounts.filter(a=>a.kind==='card').map(a=>`<option value="${a.id}">${esc(a.name)}</option>`).join('')}</select>
   <label class="b">Выбрать скриншоты<input type="file" accept="image/*" multiple hidden onchange="doShots(this.files)"></label><div id="ss_prog" class="mut"></div></div>
   <div class="card"><b>3. Перенос из CoinKeeper (CSV)</b><p class="mut">Экспорт CoinKeeper: Настройки → Экспорт данных → CSV. Кошельки, источники и категории сопоставляются по названию, недостающие создаются. Повторный импорт безопасен.</p>
-  <label class="b s">Выписки Т‑Банка для подсказок (необязательно)<input type="file" accept=".csv,text/csv" multiple hidden onchange="ckBanks(this.files)"></label> <span class="mut" id="ckb"></span>
-  <label class="b">Выбрать CSV CoinKeeper<input type="file" accept=".csv,text/csv" hidden onchange="doCK(this.files[0])"></label></div>
-  <div id="ssedit"></div><div id="review"></div>`;}
+  <p class="mut">Шаг А: нажмите «Выписки Т‑Банка для подсказок» и выберите <b>оба</b> файла сразу (Аня и Мама). Шаг Б: выберите CSV CoinKeeper. Решения подставятся по банку.</p><label class="b s">А. Выписки Т‑Банка для подсказок<input type="file" accept=".csv,text/csv" multiple hidden onchange="ckBanks(this.files)"></label> <span class="mut" id="ckb"></span>
+  <label class="b">Б. Выбрать CSV CoinKeeper<input type="file" accept=".csv,text/csv" hidden onchange="doCK(this.files[0])"></label></div>
+  <div id="ssedit"></div><div id="review"></div>`;setTimeout(()=>{ckbStatus();if(CK)renderCK();});}
 };
 function opIcon(o){if(o.type==='transfer'){const a=S.accounts.find(x=>x.id===o.toAccountId)||{};return [a.icon||'⇄',a.color||'#555'];}
   const c=S.cats.find(x=>x.name===o.category&&x.income===(o.type==='income'))||{};return [c.icon||'•',o.type==='income'?COLORS.inc:COLORS.exp];}
@@ -238,34 +238,56 @@ function renderSS(){$('#ssedit').innerHTML=`<div class="card"><b>Распозн�
 function ssToReview(){const rows=ssRows.filter(r=>r.amount&&r.date).map(r=>({...r,date:r.date+'T00:00:00',amount:+r.amount}));
   const ops=Core.screenshotIds(rows).map(r=>({bankId:r.bankId,date:r.date,amount:r.amount,desc:r.desc,bankCategory:r.cat||'',card:'',mcc:''}));
   pending=Core.reconcile(ops,S.ops,ssAcc,'cash').map(p=>({...p,card:ssAcc,accept:p.action!=='duplicate'}));
-  $('#ssedit').innerHTML='';renderReview(0);$('#review').scrollIntoView();}
+  $('#ssedit').innerHTML='';renderReview(0);$("#review").scrollIntoView();}
 // ---- CoinKeeper import ----
 let CK=null;
 const ckSkipped=()=>JSON.parse(localStorage.ckSkipped||'[]');
-let CKB=[];
+const APP_VER='v10';
+let CKB=[];try{CKB=JSON.parse(localStorage.ckBanks||'[]');}catch(e){CKB=[];}
+function ckbStatus(){const el=$('#ckb');if(!el)return;el.innerHTML=CKB.length?'✅ Выписки загружены: '+CKB.map(b=>esc((b.accountId?accName(b.accountId):b.name)+' ('+b.ops.length+' операций)')).join(', ')+' <button class="b s" onclick="CKB=[];localStorage.removeItem(\'ckBanks\');ckbStatus();if(CK){CK=Core.planCoinKeeper(CK.items.map(i=>i.row),{accounts:S.accounts,cats:S.cats,ops:S.ops,skipped:ckSkipped()});CK.items.forEach(i=>{i.accept=i.action===\'add\'||i.action===\'link\'});renderCK();}">Сбросить</button>':'<span class="neg">⚠️ Выписки не загружены — подсказок банка не будет. Сначала нажмите кнопку выше.</span>';}
 async function ckBanks(files){CKB=[];for(const f of files){const r=Core.parseTBank(Core.decode(await f.arrayBuffer()));if(r.ops.length)CKB.push({name:f.name,ops:r.ops});}
-  $('#ckb').textContent=CKB.length?'Загружено выписок: '+CKB.length+' ('+CKB.map(b=>b.ops.length).join(' + ')+' операций)':'';if(CK)ckSuggest(),renderCK();}
-function ckSuggest(){if(!CKB.length)return;CKB.forEach(b=>{const g=Core.guessBankAccount(CK,b.ops);b.accountId=g&&g.accountId;});
-  const banks=CKB.filter(b=>b.accountId);CK.bankStat=Core.suggestCoinKeeper(CK,banks,S.cats.filter(c=>!c.income).map(c=>c.name));
-  CK.bankNote=banks.map(b=>b.name+' → '+accName(b.accountId)).join(', ');}
-async function doCK(file){const {rows,errors}=Core.parseCoinKeeper(Core.decode(await file.arrayBuffer()));if(errors.length)return toast(errors[0]);
-  CK=Core.planCoinKeeper(rows,{accounts:S.accounts,cats:S.cats,ops:S.ops,skipped:ckSkipped()});
+  if(!CKB.length)toast('В файлах не найдено операций Т‑Банка');
+  try{localStorage.ckBanks=JSON.stringify(CKB);}catch(e){}
+  if(CK)ckReplan();ckbStatus();}
+function ckReplan(){const rows=CK.items.map(i=>i.row);CK=Core.planCoinKeeper(rows,{accounts:S.accounts,cats:S.cats,ops:S.ops,skipped:ckSkipped()});
   CK.items.forEach(i=>{i.accept=i.action==='add'||i.action==='link';});ckSuggest();renderCK();}
-function ckRow(i,n,extra){const o=i.op;const w=accName(o.accountId)||i.row.from||i.row.to;
-  return `<div class="row"><div style="flex:1;min-width:0"><div>${esc(i.row.date)} · ${esc(o.type==='transfer'?accName(o.accountId)+' → '+accName(o.toAccountId):o.category?o.category+' · '+w:w)}</div><div class="mut">${esc(i.row.note||'')}${i.hint?' · '+esc(i.hint):''}</div></div><b>${fmt(o.amount)}</b>${extra||''}</div>`;}
+function ckSuggest(){if(!CKB.length||!CK)return;CKB.forEach(b=>{const g=Core.guessBankAccount(CK,b.ops);b.accountId=g&&g.accountId;});
+  const banks=CKB.filter(b=>b.accountId);CK.bankStat=Core.suggestCoinKeeper(CK,banks,S.cats.filter(c=>!c.income).map(c=>c.name));
+  CK.bankNote=banks.map(b=>b.name+' → '+accName(b.accountId)).join(', ');
+  CK.items.forEach(i=>{if(i.action==='decide'&&i.sugChoice)i.choice=i.sugChoice;});}
+async function doCK(file){ckScrolled=false;const {rows,errors}=Core.parseCoinKeeper(Core.decode(await file.arrayBuffer()));if(errors.length)return toast(errors[0]);
+  CK=Core.planCoinKeeper(rows,{accounts:S.accounts,cats:S.cats,ops:S.ops,skipped:ckSkipped()});
+  CK.items.forEach(i=>{i.accept=i.action==='add'||i.action==='link';});ckSuggest();renderCK();ckbStatus();}
+async function delBankOps(){const xs=S.ops.filter(o=>(o.bankIds||[]).length&&(o.bankIds||[]).every(b=>!String(b).startsWith('ck:')));if(!confirm('Удалить '+xs.length+' операций, добавленных из выписок/скриншотов? Ручные и перенесённые из CoinKeeper останутся.'))return;for(const o of xs)await del('ops',o.id);S.ops=await all('ops');toast('Удалено: '+xs.length);show('import');}
+// from → to of an item, in words, for the chosen decision
+function ckFlow(i){const o=i.op,r=i.row,cashN=accName(CK.cashId);const acc=accName(o.accountId)||r.from||r.to;
+  if(i.action==='decide'){const src=i.bankOp&&i.bank&&i.bank.sender?i.bank.sender:'?';
+    switch(i.choice){case 'transfer':return i.inflow?cashN+' → '+acc:acc+' → '+cashN;
+      case 'card':return i.inflow?accName(i.otherAcc)+' → '+acc:acc+' → '+accName(i.otherAcc);
+      case 'income':return 'Доход «'+(i.sugCat||'Прочее')+'»'+(src!=='?'?' (от '+src+')':'')+' → '+acc;
+      case 'expense':return acc+' → расход «'+(i.sugCat||'Прочее')+'»';
+      default:return (i.inflow?'Поступление на ':'Списание с ')+acc+' — не будет импортировано';}}
+  if(o.type==='transfer')return accName(o.accountId)+' → '+accName(o.toAccountId);
+  if(o.type==='income')return 'Доход «'+o.category+'» → '+acc;
+  return acc+' → '+o.category;}
+function ckRow(i,n,extra){const o=i.op,b=i.bankOp;
+  const bank=b?`<div class="mut">Банк: ${esc(b.desc||'')}${b.bankCategory?' · '+esc(b.bankCategory):''}</div>`:'';
+  const note=[i.row.note,i.hint].filter(Boolean).join(' · ');
+  return `<div class="row"><div style="flex:1;min-width:0"><div>${esc(i.row.date)} · <b>${esc(ckFlow(i))}</b></div>${bank}${note?`<div class="mut">${esc(note)}</div>`:''}</div><b class="${i.inflow||o.type==='income'?'pos':''}">${fmt(o.amount)}</b>${extra||''}</div>`;}
 function renderCK(){const it=CK.items,g=a=>it.map((x,n)=>[x,n]).filter(([x])=>x.action===a);const dec=g('decide'),pd=g('pairdup'),ln=g('link'),ad=g('add'),dup=g('duplicate');
   const cashN=accName(CK.cashId);
-  $('#review').innerHTML=`<div class="card"><b>CoinKeeper: что будет сделано</b><div class="mut">Строк: ${it.length}. Уже импортировано ранее: ${dup.length}.</div>
+  $('#review').innerHTML=`<div class="card"><b>CoinKeeper: что будет сделано</b>${CKB.length?'':'<div class="neg">⚠️ Выписки Т‑Банка не загружены. Нажмите «Выписки Т‑Банка для подсказок» выше и выберите оба файла — список пересчитается.</div>'}<div class="mut">Строк: ${it.length}. Уже импортировано ранее: ${dup.length}.</div>
    ${CK.newAccounts.length?`<div>Новые кошельки: ${CK.newAccounts.map(a=>esc(a.name)).join(', ')}</div>`:''}${CK.bankStat?`<div>Подсказки по выпискам: ${esc(CK.bankNote)}. Двойной учёт подтверждён банком: ${CK.bankStat.pairConfirmed}; строк без категории распознано: ${CK.items.filter(i=>i.action==='decide'&&i.bank).length}.</div>`:''}${CK.newCats.length?`<div>Новые кружки: ${CK.newCats.map(c=>esc(c.name)+(c.income?' (доход)':'')).join(', ')}</div>`:''}</div>
-  ${dec.length?`<div class="card"><b>Нужно решение (${dec.length})</b><div class="mut">Операции банка, которым в CoinKeeper не назначили категорию. Поступление на карту — это пополнение наличными (перевод) или доход?</div>
+  ${dec.length?`<div class="card"><b>Нужно решение (${dec.length})</b><div class="mut">Это операции банка, которые CoinKeeper сам подтянул, но вы им не дали категорию. Жирным — куда пойдут деньги при выбранном решении. ${CK.bankStat?"Решение уже подставлено по выписке; проверьте и при необходимости поменяйте в списке справа.":"Выписки не загружены — все строки по умолчанию «Пропустить». Загрузите выписки кнопкой выше, решения подставятся сами."}</div>
    <div class="flow"><button class="b s" onclick="ckAll('skip')">Все: пропустить</button>${CK.bankStat?`<button class="b s" onclick="ckAll('sug')">Все: как в банке</button>`:''}<button class="b s" onclick="ckAll('transfer')">Все: перевод</button><button class="b s" onclick="ckAll('cat')">Все: доход/расход</button></div>
-   ${dec.map(([x,n])=>ckRow(x,n,`<select style="width:auto;font-size:14px;padding:6px" onchange="CK.items[${n}].choice=this.value">${[['skip','Пропустить'],['transfer',x.inflow?'Перевод с '+cashN:'Перевод на '+cashN],[x.inflow?'income':'expense',x.inflow?'Доход ('+(x.sugCat||'Прочее')+')':'Расход ('+(x.sugCat||'Прочее')+')'],...(x.otherAcc?[['card',(x.inflow?'Перевод с ':'Перевод на ')+accName(x.otherAcc)]]:[])].map(([v,t])=>`<option value="${v}" ${x.choice===v?'selected':''}>${esc(t)}</option>`).join('')}</select>`)).join('')}</div>`:''}
-  ${pd.length?`<div class="card"><b>Похоже на двойной учёт (${pd.length}, ${fmt(pd.reduce((s,[x])=>s+x.op.amount,0))})</b><div class="mut">В один день на карту записан и перевод с наличных, и доход на ту же сумму. Перевод импортируется; доход — только если отметите.</div>
+   ${dec.map(([x,n])=>ckRow(x,n,`<select style="width:auto;font-size:14px;padding:6px" onchange="CK.items[${n}].choice=this.value;renderCK()">${[['skip','Пропустить'],['transfer',x.inflow?'Перевод с '+cashN:'Перевод на '+cashN],[x.inflow?'income':'expense',x.inflow?'Доход ('+(x.sugCat||'Прочее')+')':'Расход ('+(x.sugCat||'Прочее')+')'],...(x.otherAcc?[['card',(x.inflow?'Перевод с ':'Перевод на ')+accName(x.otherAcc)]]:[])].map(([v,t])=>`<option value="${v}" ${x.choice===v?'selected':''}>${esc(t)}</option>`).join('')}</select>`)).join('')}</div>`:''}
+  ${pd.length?`<div class="card"><b>Похоже на двойной учёт (${pd.length}, ${fmt(pd.reduce((s,[x])=>s+x.op.amount,0))})</b><div class="mut">В один день на карту записаны и перевод с наличных, и доход на ту же сумму — это одно внесение, учтённое дважды. Перевод импортируется всегда, а доход — только если поставите галочку. Обычно галочки ставить не нужно.</div>
    <button class="b s" onclick="CK.items.forEach(i=>{if(i.action==='pairdup')i.accept=!i.accept});renderCK()">Инвертировать отметки</button>
    ${pd.map(([x,n])=>ckRow(x,n,`<input type="checkbox" style="width:auto" ${x.accept?'checked':''} onchange="CK.items[${n}].accept=this.checked">`)).join('')}</div>`:''}
   ${ln.length?`<div class="card"><b>Совпадают с уже загруженными из банка (${ln.length})</b><div class="mut">Будут связаны, а не добавлены.</div>${ln.slice(0,30).map(([x,n])=>ckRow(x,n)).join('')}</div>`:''}
   ${ad.length?`<div class="card"><label class="row"><span><b>Новые операции (${ad.length})</b></span><input type="checkbox" style="width:auto" ${ad[0][0].accept?'checked':''} onchange="CK.items.forEach(i=>{if(i.action==='add')i.accept=this.checked})"></label>${ad.slice(0,20).map(([x,n])=>ckRow(x,n)).join('')}${ad.length>20?`<div class="mut">…и ещё ${ad.length-20}</div>`:''}</div>`:''}
-  <button class="b" onclick="applyCK()">Импортировать</button>`;$('#review').scrollIntoView();}
+  <button class="b" onclick="applyCK()">Импортировать</button>`;if(!ckScrolled){$('#review').scrollIntoView();ckScrolled=true;}}
+let ckScrolled=false;
 function ckAll(c){CK.items.forEach(i=>{if(i.action==='decide')i.choice=c==='sug'?(i.sugChoice||i.choice):c==='cat'?(i.inflow?'income':'expense'):c;});renderCK();}
 async function applyCK(){const btn=event.target;btn.disabled=true;btn.textContent='Импорт…';
   for(const a of CK.newAccounts)if(!S.accounts.find(x=>x.id===a.id))await put('accounts',{...a});
@@ -287,4 +309,4 @@ function show(v,arg){cur=v;document.querySelectorAll('#bar nav button').forEach(
 document.querySelectorAll('#bar nav button').forEach(b=>b.onclick=()=>show(b.dataset.v));
 $('#plus').onclick=()=>opSheet({type:'expense'});
 openDB().then(d=>{db=d;return load();}).then(()=>{show('home');runSync();});
-if('serviceWorker'in navigator)navigator.serviceWorker.register('sw.js');
+if('serviceWorker'in navigator){navigator.serviceWorker.register('sw.js',{updateViaCache:'none'}).then(r=>r.update());let rl=false;navigator.serviceWorker.addEventListener('controllerchange',()=>{if(rl)return;rl=true;location.reload();});}

@@ -174,7 +174,7 @@ function suggestCoinKeeper(plan,banks,catNames){const stat={pairConfirmed:0,pair
   const byAcc=a=>banks.find(b=>b.accountId===a);
   const match=(b,it,sign)=>{for(const tol of[0,1]){const m=b.ops.filter(o=>!used.has(o)&&Math.sign(o.amount)===sign&&Math.abs(Math.abs(o.amount)-it.op.amount)<0.005&&Math.abs(dayOf(o.date)-dayOf(it.op.date))<=tol);if(m.length)return m;}return [];};
   for(const it of plan.items){
-    if(it.action==='pairdup'){const b=byAcc(it.op.accountId);if(!b)continue;const m=match(b,it,1);const cash=m.filter(o=>isCash(o)==='in');
+    if(it.action==='pairdup'){const b=byAcc(it.op.accountId);if(!b)continue;const m=match(b,it,1);if(m[0])it.bankOp=m[0];const cash=m.filter(o=>isCash(o)==='in');
       if(m.length===1&&cash.length===1){it.accept=false;it.hint='Банк: одно внесение наличных — доход записан дважды';stat.pairConfirmed++;}
       else if(cash.length>=2){it.accept=false;it.hint='Банк: '+cash.length+' внесения наличных на эту сумму — проверьте';stat.pairAmbiguous++;}
       else if(m.length){const k=bankKind(m[0],banks.filter(x=>x!==b));it.accept=k.kind!=='cash_in';it.hint='Банк: '+k.label;stat.pairOther++;}
@@ -182,7 +182,7 @@ function suggestCoinKeeper(plan,banks,catNames){const stat={pairConfirmed:0,pair
       continue;}
     if(it.action!=='decide')continue;const b=byAcc(it.op.accountId);if(!b)continue;
     const m=match(b,it,it.inflow?1:-1);if(!m.length){it.hint='В выписке не найдено';stat.notFound++;continue;}
-    const o=m[0];used.add(o);const k=bankKind(o,banks.filter(x=>x!==b));it.bank=k;
+    const o=m[0];used.add(o);const k=bankKind(o,banks.filter(x=>x!==b));it.bank=k;it.bankOp=o;
     if(k.kind==='cash_in'||k.kind==='cash_out'){it.sugChoice='transfer';}
     else if(k.kind==='family'){it.sugChoice='card';it.otherAcc=k.otherAcc;}
     else if(it.inflow){it.sugChoice='income';it.sugCat='Прочее';it.sugNote=k.kind==='person_in'?'Перевод от '+k.sender:'Банк: '+k.label;}
