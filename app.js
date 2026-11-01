@@ -40,7 +40,7 @@ async function runSync(){if(!db||!syncUrl()||!localStorage.syncToken)return setS
   syncing=false;if(syncAgain){syncAgain=false;runSync();}}
 setInterval(runSync,60000);addEventListener('online',runSync);document.addEventListener('visibilitychange',()=>{if(!document.hidden)runSync();});
 function syncSheet(){openSheet(`<b>Синхронизация между устройствами</b><p class="mut">Данные хранятся на телефоне и работают без интернета; при наличии сети изменения отправляются на ваш сервер.</p>
-  <label class="mut">Адрес сервера (https)</label><input id="sy_url" placeholder="https://example.ru/money" value="${esc(localStorage.syncUrl||'')}" autocapitalize="off" autocorrect="off">
+  <label class="mut">Адрес сервера (https)</label><input id="sy_url" placeholder="https://example.ru/money" value="${esc(localStorage.syncUrl||'https://money.138-16-160-124.sslip.io')}" autocapitalize="off" autocorrect="off">
   ${localStorage.syncToken?`<div class="mut">Вход выполнен. ${esc(syncLabel())}</div><button class="b" onclick="closeSheet();runSync()">Синхронизировать сейчас</button><button class="b r" onclick="syncLogout()">Выйти</button>`:
   `<label class="mut">Пароль</label><input id="sy_pw" type="password" autocomplete="current-password"><button class="b" onclick="syncLogin()">Войти</button>`}
   <div id="sy_err" class="neg"></div><button class="b s" onclick="closeSheet()">Закрыть</button>`);}
