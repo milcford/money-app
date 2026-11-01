@@ -19,6 +19,11 @@ async function cleanYandex(){const ya=new Set((await raw('accounts')).filter(a=>
   for(const o of await raw('ops')){if(o.deleted||!(ya.has(o.accountId)||ya.has(o.toAccountId)))continue;const c={...o};
     for(const f of ['note','desc'])if(typeof o[f]==='string'&&o[f]){const v=Core.cleanYandexDesc(o[f],true);if(v&&v!==o[f])c[f]=v;}
     if(c.note!==o.note||c.desc!==o.desc){await put('ops',c);n++;}}return n;}
+// Jetlend: investment wallet + turn "Jetlend" card expenses into transfers card -> Jetlend (idempotent, ids/dates/amounts kept)
+async function ensureJetlend(){const ops=(await raw('ops')).filter(o=>!o.deleted&&o.type==='expense'&&Core.JL.test((o.note||'')+' '+(o.desc||''))&&o.accountId!=='jetlend');
+  const accs=await raw('accounts');if(!ops.length&&!accs.some(a=>a.id==='jetlend'&&!a.deleted))return;
+  if(!accs.some(a=>a.id==='jetlend'))await put('accounts',{id:'jetlend',name:'Jetlend',kind:'savings',invest:true,icon:'📈',color:'#4caf72',initial:0,cardMask:'',order:60});
+  for(const o of ops)await put('ops',{...o,type:'transfer',toAccountId:'jetlend',category:''});}
 async function load(){
   // migrate pre-sync records
   for(const st of ['accounts','ops','cats'])for(const r of await raw(st))if(!r.updatedAt)await putRaw(st,{...r,updatedAt:Date.now(),_dirty:1});
@@ -30,7 +35,7 @@ async function load(){
     for(const[n,ic]of[['Доход','💵'],['Аня','🛒'],['ЗП','🛒'],['Прочее','🛒']])await seed('cats',{id:'inc_'+j++,name:n,income:true,icon:ic,color:COLORS.inc,order:i++});j=0;
     for(const[n,ic]of[['Продукты','🧃'],['Развлечения','🎞️'],['Транспорт','🚌'],['Еда вне дома','🥤'],['Покупки','🛍️'],['Прочее','🛒'],['Пивной','🍺'],['Кальян','💨'],['Ремонт','🏠'],['на чай','🪙'],['Валенсия','✈️'],['парикмахерская','💇']])
       await seed('cats',{id:'exp_'+j++,name:n,income:false,icon:ic,color:COLORS.exp,order:i++});}
-  await ensureBlacks();await cleanYandex();
+  await ensureBlacks();await cleanYandex();await ensureJetlend();
   for(const st of ['accounts','ops','cats'])S[st]=await all(st);S.accounts.sort(byOrder);S.cats.sort(byOrder);}
 // ---- sync ----
 let syncing=false,syncAgain=false,syncTimer=null,syncMsg='';
@@ -45,7 +50,7 @@ async function api(path,body,tok){const r=await fetch(syncUrl()+path,{method:'PO
   const j=await r.json().catch(()=>({}));if(r.status===401&&tok){localStorage.removeItem('syncToken');throw new Error('нужно войти заново');}if(!r.ok)throw new Error(j.error||('ошибка '+r.status));return j;}
 async function runSync(){if(!db||!syncUrl()||!localStorage.syncToken)return setSync('');if(syncing){syncAgain=true;return;}syncing=true;setSync('⟳ синхронизация…');
   try{const r=await Sync.syncOnce({db:{raw,put:putRaw},cursor:+localStorage.syncCursor||0,request:b=>api('/api/sync',b,localStorage.syncToken)});
-    localStorage.syncCursor=r.cursor;localStorage.syncAt=Date.now();setSync('');if(r.applied){await cleanYandex();await refresh();}}
+    localStorage.syncCursor=r.cursor;localStorage.syncAt=Date.now();setSync('');if(r.applied){await cleanYandex();await ensureJetlend();await refresh();}}
   catch(e){setSync(navigator.onLine===false?'офлайн':'⚠ '+e.message);}
   syncing=false;if(syncAgain){syncAgain=false;runSync();}}
 setInterval(runSync,60000);addEventListener('online',runSync);document.addEventListener('visibilitychange',()=>{if(!document.hidden)runSync();});
@@ -286,6 +291,7 @@ function circMenu(k,id){const it=itemOf(k,id);if(!it)return;const bk=k==='acc'&&
   openSheet(`<b>${esc(it.icon||'')} ${esc(it.name)}</b>
   ${bk?`<label class="b s">📄 Загрузить выписку${ya?' (PDF)':' (CSV)'}<input type="file" accept="${ya?'.pdf,application/pdf':'.csv,text/csv'}" hidden onchange="closeSheet();accImport('${id}',this.files[0])"></label>
   <label class="b s">📷 Загрузить скриншоты<input type="file" accept="image/*" multiple hidden onchange="closeSheet();accShots('${id}',this.files)"></label>`:''}
+  ${k==='acc'&&(id==='jetlend'||/jet ?lend/i.test(it.name))?`<label class="b s">📄 Загрузить «Экспорт операций» JetLend (XLSX)<input type="file" accept=".xlsx,.xls" hidden onchange="closeSheet();jlImport('${id}',this.files[0])"></label>`:''}
   <button class="b s" onclick="closeSheet();window._hf={k:'${k}',id:'${id}',m:PER};show('history')">Открыть в Истории</button>
   <button class="b s" onclick="closeSheet();editCirc('${k}','${id}')">✎ ${k==='acc'?'Изменить счёт / указать остаток':'Изменить'}</button>
   <button class="b s" onclick="closeSheet()">Отмена</button>`);}
@@ -348,6 +354,25 @@ async function applyImport(){let n=0;const bals={};(IMP.accs||[]).forEach(id=>{c
   S.ops=await all('ops');
   for(const id in bals){const acc=S.accounts.find(a=>a.id===id);if(!acc)continue;const b=Core.balances(S.accounts,S.ops)[id];acc.initial=Math.round(((+acc.initial||0)+bals[id]-b)*100)/100;await put('accounts',acc);}
   S.accounts=await all('accounts');S.accounts.sort(byOrder);toast('Импортировано: '+n);afterImport();}
+// ---- JetLend XLSX import ----
+let JLP=null;
+async function jlImport(id,file){if(!file)return;let rows;try{toast('Читаю XLSX…');const X=await import('https://cdn.sheetjs.com/xlsx-0.20.3/package/xlsx.mjs');
+  const wb=X.read(new Uint8Array(await file.arrayBuffer()),{cellDates:true});rows=X.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{header:1,raw:true,defval:''});}catch(e){return alert('Не удалось прочитать файл: '+e.message);}
+  const p=Core.parseJetlend(rows);if(p.errors.length)return alert(p.errors[0]);
+  JLP={id,items:Core.planJetlend(p,S.ops,id).filter(i=>i.kind!=='dup').map(i=>({...i,accept:i.kind!=='add'}))};
+  show('import');FIX=id;renderJL();}
+function renderJL(){const it=JLP.items,L={link:'Пополнения/выводы, уже записанные переводом (свяжутся)',add:'Пополнения/выводы без пары (откуда деньги — неизвестно; отметьте, чтобы записать доходом/расходом на Jetlend)',yield:'Доход по месяцам (проценты − дефолты − НПД)'};
+  $('#review').innerHTML=`<div class="card"><b>JetLend: что будет сделано</b><div class="mut">Повторная загрузка не задвоит: месяцы обновятся.</div></div>`+['link','add','yield'].map(k=>{const xs=it.map((x,i)=>[x,i]).filter(([x])=>x.kind===k);if(!xs.length)return'';
+   return `<div class="card"><b>${L[k]} (${xs.length})</b>${xs.map(([x,i])=>`<label class="row"><input type="checkbox" style="width:auto" ${x.accept?'checked':''} onchange="JLP.items[${i}].accept=this.checked"><div style="flex:1">${k==='yield'?perLabel(x.m)+(x.target?' (обновить)':''):esc(x.d.date.slice(0,10)+' · '+x.d.op)}</div><b class="${(k==='yield'?x.v:x.d.amount)<0?'neg':'pos'}">${fmt(k==='yield'?x.v:x.d.amount)}</b></label>`).join('')}</div>`;}).join('')+
+  `<div id="rv_end"></div><div class="stick"><button class="b s" onclick="scrollEnd()">↓ Вниз</button><button class="b" id="rv_apply" data-lbl="Применить" onclick="applyJL()">Применить</button></div>`;setTimeout(updApply);}
+async function applyJL(){const id=JLP.id;let cat=S.cats.find(c=>c.income&&c.name==='Jetlend доход');
+  if(!cat&&JLP.items.some(i=>i.kind==='yield'&&i.accept)){cat={id:'inc_jetlend',name:'Jetlend доход',income:true,icon:'📈',color:COLORS.inc,order:90};await put('cats',cat);S.cats.push(cat);}
+  let n=0;for(const i of JLP.items){if(!i.accept)continue;
+   if(i.kind==='link'){const t=S.ops.find(o=>o.id===i.target);await put('ops',{...t,bankIds:[...(t.bankIds||[]),i.d.bankId]});}
+   else if(i.kind==='add')await put('ops',{id:uid(),type:i.d.amount>0?'income':'expense',amount:Math.abs(i.d.amount),accountId:id,category:i.d.amount>0?'Прочее':'Прочее',date:i.d.date,note:'JetLend: '+i.d.op,bankIds:[i.d.bankId],reviewed:false});
+   else{const o={type:i.v>=0?'income':'expense',amount:Math.abs(i.v),accountId:id,category:i.v>=0?'Jetlend доход':'Прочее',note:'JetLend доход за '+perLabel(i.m)};
+     const t=i.target&&S.ops.find(x=>x.id===i.target);await put('ops',t?{...t,...o}:{id:uid(),...o,date:i.m+'-28T12:00:00',bankIds:['jl:m:'+i.m],reviewed:false});}n++;}
+  JLP=null;S.ops=await all('ops');toast('Готово: '+n);afterImport();}
 // ---- screenshot import (client-side OCR) ----
 let ssRows=[],ssAcc='tbank';
 function loadTesseract(){return window.Tesseract?Promise.resolve():new Promise((ok,no)=>{const sc=document.createElement('script');sc.src='https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';sc.onload=ok;sc.onerror=()=>no(new Error('Не удалось загрузить модуль распознавания (нужен интернет при первом запуске)'));document.head.appendChild(sc);});}
@@ -377,7 +402,7 @@ function ssToReview(){const rows=ssRows.filter(r=>r.amount&&r.date).map(r=>({...
 // ---- CoinKeeper import ----
 let CK=null;
 const ckSkipped=()=>JSON.parse(localStorage.ckSkipped||'[]');
-const APP_VER='v30';
+const APP_VER='v31';
 let CKB=[];try{CKB=JSON.parse(localStorage.ckBanks||'[]');}catch(e){CKB=[];}
 function ckbStatus(){const el=$('#ckb');if(!el)return;el.innerHTML=CKB.length?'✅ Выписки загружены: '+CKB.map(b=>esc((b.accountId?accName(b.accountId):b.name)+' ('+b.ops.length+' операций)')).join(', ')+' <button class="b s" onclick="CKB=[];localStorage.removeItem(\'ckBanks\');ckbStatus();if(CK){CK=Core.planCoinKeeper(CK.items.map(i=>i.row),{accounts:S.accounts,cats:S.cats,ops:S.ops,skipped:ckSkipped()});CK.items.forEach(i=>{i.accept=i.action===\'add\'||i.action===\'link\'});renderCK();}">Сбросить</button>':'<span class="neg">⚠️ Выписки не загружены — подсказок банка не будет. Сначала нажмите кнопку выше.</span>';}
 async function ckBanks(files){CKB=[];for(const f of files){const r=Core.parseTBank(Core.decode(await f.arrayBuffer()));if(r.ops.length)CKB.push({name:f.name,ops:r.ops});}

@@ -279,6 +279,28 @@ function moveOp(list,id,dir){const day=(list.find(o=>o.id===id)||{}).date;if(!da
   const t=new Date(tb.slice(0,19)+'Z').getTime()+(dir<0?1000:-1000);const n=new Date(t).toISOString().slice(0,19);
   if(n.slice(0,10)!==d)return [{...a,date:ta},{...b,date:new Date(t+(dir<0?-2000:2000)).toISOString().slice(0,19)}];
   return [{...a,date:n}];}
+// ---------- JetLend "Экспорт операций" (transactions.xlsx), rows = array of arrays ----------
+const JL=/jet ?lend|джетленд/i;
+function jlDate(v){if(v instanceof Date){const z=x=>String(x).padStart(2,'0');return `${v.getFullYear()}-${z(v.getMonth()+1)}-${z(v.getDate())}T${z(v.getHours())}:${z(v.getMinutes())}:${z(v.getSeconds())}`;}if(typeof v==='number'){return new Date(Math.round((v-25569)*864e5)).toISOString().slice(0,19);}
+  const m=String(v||'').match(/(\d{2})\.(\d{2})\.(\d{4})(?:[ T,]+(\d{1,2}):(\d{2})(?::(\d{2}))?)?/);if(m)return `${m[3]}-${m[2]}-${m[1]}T${(m[4]||'0').padStart(2,'0')}:${m[5]||'00'}:${m[6]||'00'}`;
+  const i=String(v||'').match(/^(\d{4}-\d{2}-\d{2})(?:[ T](\d{2}:\d{2}(?::\d{2})?))?/);return i?i[1]+'T'+((i[2]||'00:00:00')+':00').slice(0,8):null;}
+function parseJetlend(rows){const hi=rows.findIndex(r=>(r||[]).some(c=>String(c).trim()==='Тип операции'));if(hi<0)return {errors:['Это не похоже на «Экспорт операций» JetLend (нет колонки «Тип операции»)']};
+  const h=rows[hi].map(c=>String(c||'').trim());const ix=n=>h.indexOf(n);const I={d:ix('Дата'),op:ix('Тип операции'),in:ix('Приход'),out:ix('Расход'),rev:ix('Доход после удержания')};
+  if(I.d<0||I.in<0||I.out<0)return {errors:['В файле JetLend нет колонок Дата/Приход/Расход']};
+  const n=v=>typeof v==='number'?v:(num(String(v||''))||0);const deposits=[],monthly={},seen={};
+  for(const r of rows.slice(hi+1)){if(!r)continue;const date=jlDate(r[I.d]);const op=String(r[I.op]||'').trim();if(!date||!op)continue;
+    if(/^(пополнение сч[её]та|вывод (средств|со сч[её]та))$/i.test(op)){const a=Math.round((n(r[I.in])-n(r[I.out]))*100)/100;if(!a)continue;
+      const base=['jl',date,a.toFixed(2)].join('|');seen[base]=(seen[base]||0)+1;deposits.push({date,amount:a,op,bankId:'jl:'+hash(base+'#'+seen[base])});continue;}
+    if(/переуступк/i.test(op)||I.rev<0)continue;const m=date.slice(0,7);monthly[m]=Math.round(((monthly[m]||0)+n(r[I.rev]))*100)/100;}
+  return {deposits,monthly,errors:[]};}
+// plan against existing ops: deposits link to card->Jetlend transfers (±3 days, same amount), month yield = one op per month (id jl:m:YYYY-MM, updated on re-import)
+function planJetlend(p,existing,jl){const known=new Set();existing.forEach(o=>(o.bankIds||[]).forEach(b=>known.add(b)));const used=new Set(),items=[];
+  for(const d of p.deposits){if(known.has(d.bankId)){items.push({kind:'dup',d});continue;}const abs=Math.abs(d.amount);
+    const t=existing.find(o=>!used.has(o.id)&&o.type==='transfer'&&(d.amount>0?o.toAccountId===jl:o.accountId===jl)&&Math.abs(o.amount-abs)<0.005&&days(o.date.slice(0,10),d.date.slice(0,10))<=3);
+    if(t){used.add(t.id);items.push({kind:'link',d,target:t.id});}else items.push({kind:'add',d});}
+  for(const m of Object.keys(p.monthly).sort()){const v=p.monthly[m];const ex=existing.find(o=>(o.bankIds||[]).includes('jl:m:'+m));
+    if(ex){if(Math.abs((ex.type==='income'?ex.amount:-ex.amount)-v)>=0.005)items.push({kind:'yield',m,v,target:ex.id});}else if(Math.abs(v)>=0.005)items.push({kind:'yield',m,v});}
+  return items;}
 function parseYandexText(lines){const D=/(\d{2})\.(\d{2})\.(\d{4})/,AM=/([+\-−–]?)\s?(\d{1,3}(?:[ \u00a0\u202f]\d{3})*[.,]\d{2})\s*(?:₽|RUB|руб)/g;
   const END=/^(исходящий\s+остаток|всего\s+(расход|приход)|с уважением)/i;
   const JUNK=/^(продолжение на следующей|страница \d|описание операции|операции обработки|мск( мск)?$|исх\. №|выписка по|дата \d|ао «яндекс банк»|.*лицензия банка россии|.*паспорт рф|.*дата рождения|.*сообщает, что между|.*\(далее —)/i;
@@ -304,6 +326,6 @@ function parseYandexText(lines){const D=/(\d{2})\.(\d{2})\.(\d{4})/,AM=/([+\-−
     const t=l.match(/^в (\d{2}):(\d{2})$/);if(t){cur.date=cur.date.slice(0,11)+t[1]+':'+t[2]+':00';continue;}
     cur.desc+=' '+l;}
   flush();return {ops,skipped:0,errors:ops.length?[]:['Не удалось найти операции в выписке Яндекс Банка'],closing,totIn,totOut};}
-root.Core={moveOp,opCmp,shotTimes,cleanYandexDesc,parseYandexText,ownToTransfer,OWN,suggestCoinKeeper,guessBankAccount,bankKind,parseCoinKeeper,planCoinKeeper,decideOp,parseScreenshotText,screenshotIds,similar,decode,parseTBank,reconcile,balances,hash,isCash};
+root.Core={JL,jlDate,parseJetlend,planJetlend,moveOp,opCmp,shotTimes,cleanYandexDesc,parseYandexText,ownToTransfer,OWN,suggestCoinKeeper,guessBankAccount,bankKind,parseCoinKeeper,planCoinKeeper,decideOp,parseScreenshotText,screenshotIds,similar,decode,parseTBank,reconcile,balances,hash,isCash};
 if(typeof module!=='undefined')module.exports=root.Core;
 })(typeof self!=='undefined'?self:globalThis);
