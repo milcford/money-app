@@ -251,12 +251,20 @@ function balances(accounts,ops){const b={};accounts.forEach(a=>b[a.id]=+a.initia
   return b;}
 // ---- Yandex Bank «Выписка по договору» (PDF) — best effort (beta) ----
 // lines: text lines of the PDF in reading order. Returns {ops,skipped,errors,closing}
+const YSTART=/(Погашение (основного долга|процентов)|Входящий перевод|Исходящий перевод|Оплата (товаров|СБП|услуг)|Прочие выплаты|Перевод (между|на|с)|Пополнение|Снятие|Возврат|Кешб[эе]к|Начисление)/;
+function cleanYandexDesc(d,force){let t=String(d||'');
+  t=t.replace(/Исх\. №[\s\S]*?«Договор»\)\.?/g,' ').replace(/операции обработки операции( ЭСП)?( МСК)*/gi,' ')
+   .replace(/(по договору\s*)?№?\s*КС\d{8,}/g,' ').replace(/№\s*Э\d{8,}/g,' ').replace(/Паспорт РФ[^«]*/gi,' ')
+   .replace(/[А-ЯЁ][а-яё]+ [А-ЯЁ][а-яё]+ [А-ЯЁ][а-яё]+ сообщает[^.]*\./g,' ').replace(/Дата рождения\S*/gi,' ');
+  if(force){const m=t.match(YSTART);if(m&&m.index>0)t=t.slice(m.index);}
+  t=t.replace(/\s+/g,' ').trim().replace(/ по договору$/,' по кредиту').replace(/^Погашение основного долга( по)?$/,'Погашение основного долга по кредиту').replace(/^Погашение процентов( за( пользование кредитом)?)?( по)?$/,'Погашение процентов по кредиту');
+  return t;}
 function parseYandexText(lines){const D=/(\d{2})\.(\d{2})\.(\d{4})/,AM=/([+\-−–]?)\s?(\d{1,3}(?:[ \u00a0\u202f]\d{3})*[.,]\d{2})\s*(?:₽|RUB|руб)/g;
   const END=/^(исходящий\s+остаток|всего\s+(расход|приход)|с уважением)/i;
-  const JUNK=/^(продолжение на следующей|страница \d|описание операции|операции обработки|мск( мск)?$|исх\. №|выписка по|дата \d|ао «яндекс банк»)/i;
+  const JUNK=/^(продолжение на следующей|страница \d|описание операции|операции обработки|мск( мск)?$|исх\. №|выписка по|дата \d|ао «яндекс банк»|.*лицензия банка россии|.*паспорт рф|.*дата рождения|.*сообщает, что между|.*\(далее —)/i;
   const ops=[],seen={};let cur=null,closing=null,totIn=null,totOut=null,started=false,ended=false;
   const val=m=>{const v=num(m[2]);return m[1]==='+'?v:m[1]?-v:null;};
-  const flush=()=>{if(!cur)return;cur.desc=cur.desc.replace(/\s+/g,' ').trim();
+  const flush=()=>{if(!cur)return;cur.desc=cleanYandexDesc(cur.desc);
     if(cur.amount==null)cur.amount=/(пополн|зачисл|входящ|возврат|кешб[эе]к|проценты|начислен)/i.test(cur.desc)?Math.abs(cur.abs):-Math.abs(cur.abs);
     const base=['y',cur.date,cur.amount.toFixed(2),norm(cur.desc)].join('|');seen[base]=(seen[base]||0)+1;
     ops.push({bankId:hash(base+'#'+seen[base]),date:cur.date,amount:cur.amount,currency:'RUB',card:cur.card||'',desc:cur.desc,bankCategory:'',mcc:''});cur=null;};
@@ -276,6 +284,6 @@ function parseYandexText(lines){const D=/(\d{2})\.(\d{2})\.(\d{4})/,AM=/([+\-−
     const t=l.match(/^в (\d{2}):(\d{2})$/);if(t){cur.date=cur.date.slice(0,11)+t[1]+':'+t[2]+':00';continue;}
     cur.desc+=' '+l;}
   flush();return {ops,skipped:0,errors:ops.length?[]:['Не удалось найти операции в выписке Яндекс Банка'],closing,totIn,totOut};}
-root.Core={parseYandexText,ownToTransfer,OWN,suggestCoinKeeper,guessBankAccount,bankKind,parseCoinKeeper,planCoinKeeper,decideOp,parseScreenshotText,screenshotIds,similar,decode,parseTBank,reconcile,balances,hash,isCash};
+root.Core={cleanYandexDesc,parseYandexText,ownToTransfer,OWN,suggestCoinKeeper,guessBankAccount,bankKind,parseCoinKeeper,planCoinKeeper,decideOp,parseScreenshotText,screenshotIds,similar,decode,parseTBank,reconcile,balances,hash,isCash};
 if(typeof module!=='undefined')module.exports=root.Core;
 })(typeof self!=='undefined'?self:globalThis);

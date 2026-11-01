@@ -14,6 +14,11 @@ const COLORS={inc:'#2c4a9a',cash:'#c9a84c',savings:'#4caf72',card:'#4a3b1c',exp:
 const PALETTE=['#2c4a9a','#c9a84c','#4caf72','#4a3b1c','#0d2626','#8e44ad','#c0392b','#16a085','#d35400','#555'];
 async function ensureBlacks(){const acc=await raw('accounts');for(const x of acc)if((x.id==='mama_t'||x.id==='anya_t')&&x.credit===undefined)await put('accounts',{...x,credit:true,limit:x.limit||0});for(const[id,name,card]of[['mama_black','Мама Black','mama_t'],['anya_black','Аня Black','anya_t']])
   if(acc.some(a=>a.id===card)&&!acc.some(a=>a.id===id))await putRaw('accounts',{id,name,kind:'card',icon:'🖤',color:'#222',initial:0,cardMask:'',order:50,updatedAt:1,_dirty:1});}
+// one-time-ish (idempotent) cleanup: PDF header junk (ФИО, паспорт, договор) in Yandex Bank op descriptions
+async function cleanYandex(){const ya=new Set((await raw('accounts')).filter(a=>!a.deleted&&a.bank==='yandex').map(a=>a.id));if(!ya.size)return 0;let n=0;
+  for(const o of await raw('ops')){if(o.deleted||!(ya.has(o.accountId)||ya.has(o.toAccountId)))continue;const c={...o};
+    for(const f of ['note','desc'])if(typeof o[f]==='string'&&o[f]){const v=Core.cleanYandexDesc(o[f],true);if(v&&v!==o[f])c[f]=v;}
+    if(c.note!==o.note||c.desc!==o.desc){await put('ops',c);n++;}}return n;}
 async function load(){
   // migrate pre-sync records
   for(const st of ['accounts','ops','cats'])for(const r of await raw(st))if(!r.updatedAt)await putRaw(st,{...r,updatedAt:Date.now(),_dirty:1});
@@ -25,7 +30,7 @@ async function load(){
     for(const[n,ic]of[['Доход','💵'],['Аня','🛒'],['ЗП','🛒'],['Прочее','🛒']])await seed('cats',{id:'inc_'+j++,name:n,income:true,icon:ic,color:COLORS.inc,order:i++});j=0;
     for(const[n,ic]of[['Продукты','🧃'],['Развлечения','🎞️'],['Транспорт','🚌'],['Еда вне дома','🥤'],['Покупки','🛍️'],['Прочее','🛒'],['Пивной','🍺'],['Кальян','💨'],['Ремонт','🏠'],['на чай','🪙'],['Валенсия','✈️'],['парикмахерская','💇']])
       await seed('cats',{id:'exp_'+j++,name:n,income:false,icon:ic,color:COLORS.exp,order:i++});}
-  await ensureBlacks();
+  await ensureBlacks();await cleanYandex();
   for(const st of ['accounts','ops','cats'])S[st]=await all(st);S.accounts.sort(byOrder);S.cats.sort(byOrder);}
 // ---- sync ----
 let syncing=false,syncAgain=false,syncTimer=null,syncMsg='';
@@ -40,7 +45,7 @@ async function api(path,body,tok){const r=await fetch(syncUrl()+path,{method:'PO
   const j=await r.json().catch(()=>({}));if(r.status===401&&tok){localStorage.removeItem('syncToken');throw new Error('нужно войти заново');}if(!r.ok)throw new Error(j.error||('ошибка '+r.status));return j;}
 async function runSync(){if(!db||!syncUrl()||!localStorage.syncToken)return setSync('');if(syncing){syncAgain=true;return;}syncing=true;setSync('⟳ синхронизация…');
   try{const r=await Sync.syncOnce({db:{raw,put:putRaw},cursor:+localStorage.syncCursor||0,request:b=>api('/api/sync',b,localStorage.syncToken)});
-    localStorage.syncCursor=r.cursor;localStorage.syncAt=Date.now();setSync('');if(r.applied)await refresh();}
+    localStorage.syncCursor=r.cursor;localStorage.syncAt=Date.now();setSync('');if(r.applied){await cleanYandex();await refresh();}}
   catch(e){setSync(navigator.onLine===false?'офлайн':'⚠ '+e.message);}
   syncing=false;if(syncAgain){syncAgain=false;runSync();}}
 setInterval(runSync,60000);addEventListener('online',runSync);document.addEventListener('visibilitychange',()=>{if(!document.hidden)runSync();});
@@ -352,7 +357,7 @@ function ssToReview(){const rows=ssRows.filter(r=>r.amount&&r.date).map(r=>({...
 // ---- CoinKeeper import ----
 let CK=null;
 const ckSkipped=()=>JSON.parse(localStorage.ckSkipped||'[]');
-const APP_VER='v22';
+const APP_VER='v23';
 let CKB=[];try{CKB=JSON.parse(localStorage.ckBanks||'[]');}catch(e){CKB=[];}
 function ckbStatus(){const el=$('#ckb');if(!el)return;el.innerHTML=CKB.length?'✅ Выписки загружены: '+CKB.map(b=>esc((b.accountId?accName(b.accountId):b.name)+' ('+b.ops.length+' операций)')).join(', ')+' <button class="b s" onclick="CKB=[];localStorage.removeItem(\'ckBanks\');ckbStatus();if(CK){CK=Core.planCoinKeeper(CK.items.map(i=>i.row),{accounts:S.accounts,cats:S.cats,ops:S.ops,skipped:ckSkipped()});CK.items.forEach(i=>{i.accept=i.action===\'add\'||i.action===\'link\'});renderCK();}">Сбросить</button>':'<span class="neg">⚠️ Выписки не загружены — подсказок банка не будет. Сначала нажмите кнопку выше.</span>';}
 async function ckBanks(files){CKB=[];for(const f of files){const r=Core.parseTBank(Core.decode(await f.arrayBuffer()));if(r.ops.length)CKB.push({name:f.name,ops:r.ops});}
