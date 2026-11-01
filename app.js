@@ -110,7 +110,7 @@ function opIcon(o){if(o.type==='transfer'){const a=S.accounts.find(x=>x.id===o.t
 function hrow(o){const[ic,col]=opIcon(o);const t=o.type==='transfer'?`${accName(o.accountId)} → ${accName(o.toAccountId)}`:o.category||'Без категории';
   const sub=o.type==='transfer'?'Перевод':o.type==='income'?`→ ${accName(o.accountId)}`:accName(o.accountId);
   return `<div class="hrow ${o.reviewed===false?'new':''}" onclick="editOp('${o.id}')"><div class="mini" style="background:${col}">${esc(ic)}</div>
-  <div class="t"><div>${esc(t)}</div><div class="mut">${esc(sub)}${o.note?' · '+esc(o.note):''} ${o.bankIds&&o.bankIds.length?'<span class="tag">банк</span>':''}</div></div>
+  <div class="t"><div>${esc(t)}</div><div class="mut">${esc(sub)}${o.note?' · '+esc(o.note):''} ${(o.bankIds||[]).some(b=>!String(b).startsWith('ck:'))?'<span class="tag">банк</span>':''}</div></div>
   <b class="${o.type==='expense'?'neg':o.type==='income'?'pos':''}">${o.type==='expense'?'−':o.type==='income'?'+':''}${fmt(o.amount)}</b></div>`;}
 async function markAll(){for(const o of S.ops)if(o.reviewed===false){o.reviewed=true;await put('ops',o);}refresh();}
 function menu(){openSheet(`<b>Меню</b><button class="b s" onclick="closeSheet();show('import')">Импорт CSV / скриншоты</button>
@@ -242,7 +242,7 @@ function ssToReview(){const rows=ssRows.filter(r=>r.amount&&r.date).map(r=>({...
 // ---- CoinKeeper import ----
 let CK=null;
 const ckSkipped=()=>JSON.parse(localStorage.ckSkipped||'[]');
-const APP_VER='v10';
+const APP_VER='v11';
 let CKB=[];try{CKB=JSON.parse(localStorage.ckBanks||'[]');}catch(e){CKB=[];}
 function ckbStatus(){const el=$('#ckb');if(!el)return;el.innerHTML=CKB.length?'✅ Выписки загружены: '+CKB.map(b=>esc((b.accountId?accName(b.accountId):b.name)+' ('+b.ops.length+' операций)')).join(', ')+' <button class="b s" onclick="CKB=[];localStorage.removeItem(\'ckBanks\');ckbStatus();if(CK){CK=Core.planCoinKeeper(CK.items.map(i=>i.row),{accounts:S.accounts,cats:S.cats,ops:S.ops,skipped:ckSkipped()});CK.items.forEach(i=>{i.accept=i.action===\'add\'||i.action===\'link\'});renderCK();}">Сбросить</button>':'<span class="neg">⚠️ Выписки не загружены — подсказок банка не будет. Сначала нажмите кнопку выше.</span>';}
 async function ckBanks(files){CKB=[];for(const f of files){const r=Core.parseTBank(Core.decode(await f.arrayBuffer()));if(r.ops.length)CKB.push({name:f.name,ops:r.ops});}
