@@ -64,9 +64,21 @@ function openSheet(h){$('#sheet').innerHTML=h;$('#sheetbg').style.display='block
 function closeSheet(){$('#sheet').classList.remove('open');$('#sheetbg').style.display='none';}
 function monthSums(m){const r={inc:0,exp:0,byCat:{},byInc:{}};for(const o of S.ops){if(!o.date.startsWith(m))continue;
   if(o.type==='expense'){r.exp+=o.amount;r.byCat[o.category]=(r.byCat[o.category]||0)+o.amount;}else if(o.type==='income'){r.inc+=o.amount;r.byInc[o.category]=(r.byInc[o.category]||0)+o.amount;}}return r;}
-function header(){const m=monthSums(month()),b=Core.balances(S.accounts,S.ops);const tot=S.accounts.filter(a=>a.kind!=='savings').reduce((x,a)=>x+b[a.id],0);
+let PER=localStorage.per||month();
+const MN=['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
+const perLabel=p=>p?MN[+p.slice(5,7)-1]+' '+p.slice(0,4):'Всё время';
+function shiftM(p,d){const dt=new Date(Date.UTC(+p.slice(0,4),+p.slice(5,7)-1+d,1));return dt.toISOString().slice(0,7);}
+function setPer(p){PER=p;localStorage.per=p;refreshView();}
+function perStep(d){setPer(shiftM(PER||month(),d));}
+function refreshView(){header();if(views[cur])views[cur](window._arg);}
+function perBar(){return `<div class="perbar"><button onclick="perStep(-1)">◀</button><span onclick="setPer(PER?'':month())">${esc(perLabel(PER))}</span><button onclick="perStep(1)">▶</button></div>`;}
+function opMatch(k,id){if(k==='inc'){const n=itemOf('inc',id).name;return o=>o.type==='income'&&o.category===n;}
+  if(k==='exp'){const n=itemOf('exp',id).name;return o=>o.type==='expense'&&o.category===n;}
+  return o=>o.accountId===id||o.toAccountId===id;}
+function opVal(k,id,o){if(k!=='acc')return o.amount;if(o.type==='transfer')return o.toAccountId===id?o.amount:-o.amount;return o.type==='income'?o.amount:-o.amount;}
+function header(){const m=monthSums(PER),b=Core.balances(S.accounts,S.ops);const tot=S.accounts.filter(a=>a.kind!=='savings').reduce((x,a)=>x+b[a.id],0);
   $('#top').innerHTML=`<div class="prof" onclick="renameProfile()">${esc(localStorage.profile||'Мои финансы')} ⌄</div><div id="sync" onclick="syncSheet()" style="position:absolute;right:14px;top:calc(env(safe-area-inset-top) + 12px);font-size:12px;color:#9ab">${esc(syncLabel())}</div>
-  <div class="figs"><div><b>Расходы</b><span>${fmt(m.exp)}</span></div><div><b>Баланс</b><span>${fmt(tot)}</span></div><div><b>Доходы</b><span>${fmt(m.inc)}</span></div></div>`;
+  <div class="figs"><div><b>Расходы</b><span>${fmt(m.exp)}</span></div><div><b>Баланс</b><span>${fmt(tot)}</span></div><div><b>Доходы</b><span>${fmt(m.inc)}</span></div></div>${perBar()}`;
   const n=S.ops.filter(o=>o.reviewed===false).length,bd=$('#badge');bd.textContent=n;bd.style.display=n?'block':'none';}
 function renameProfile(){const n=prompt('Название',localStorage.profile||'Мои финансы');if(n){localStorage.profile=n;header();}}
 // ---- circles ----
@@ -78,7 +90,8 @@ function pager(items,per,id){const pages=[];for(let i=0;i<items.length;i+=per)pa
   return `<div class="pager" id="${id}" onscroll="dots(this)">${pages.map(p=>`<div class="page">${p.join('')}</div>`).join('')}</div><div class="dots">${pages.length>1?pages.map((_,i)=>`<i class="${i?'':'on'}"></i>`).join(''):''}</div>`;}
 function dots(el){const i=Math.round(el.scrollLeft/el.clientWidth);el.nextElementSibling.querySelectorAll('i').forEach((d,j)=>d.classList.toggle('on',i===j));}
 const views={
-home(){const m=monthSums(month()),b=Core.balances(S.accounts,S.ops);
+detail(a){a=a||window._arg;if(a)detail(a.k,a.id);},
+home(){const m=monthSums(PER),b=Core.balances(S.accounts,S.ops);
   const inc=S.cats.filter(c=>c.income).map(c=>circ('inc',c,m.byInc[c.name]));inc.push(addCirc('inc'));
   const acc=S.accounts.map(a=>circ('acc',a,b[a.id]));acc.push(addCirc('acc'));
   const ex=S.cats.filter(c=>!c.income).map(c=>circ('exp',c,m.byCat[c.name]));ex.push(addCirc('exp'));
@@ -88,8 +101,8 @@ stats(){const m=window._month||month(),s=monthSums(m);const rows=Object.entries(
   V.innerHTML=`<div class="hdr"><h2>Обзор</h2></div><div class="card"><input type="month" value="${m}" onchange="window._month=this.value;views.stats()">
   <div class="row"><span>Доходы</span><b class="pos">${fmt(s.inc)}</b></div><div class="row"><span>Расходы</span><b class="neg">${fmt(s.exp)}</b></div><div class="row"><span>Итог</span><b>${fmt(s.inc-s.exp)}</b></div></div>
   <div class="card">${rows.map(([k,v])=>`<div class="row"><span>${esc(ic(k))} ${esc(k)}</span><span>${fmt(v)} <span class="mut">${Math.round(v/s.exp*100)}%</span></span></div><div style="height:4px;background:#6fe3df;width:${v/s.exp*100}%;border-radius:2px"></div>`).join('')||'<div class="mut">Нет расходов</div>'}</div>`;},
-history(){const list=[...S.ops].sort((a,b)=>b.date.localeCompare(a.date));const n=list.filter(o=>o.reviewed===false).length;const g={};list.forEach(o=>(g[o.date.slice(0,10)]=g[o.date.slice(0,10)]||[]).push(o));
-  V.innerHTML=`<div class="hdr"><h2>История</h2><div><button onclick="show('import')">⤓ Импорт</button> <button onclick="menu()">⋯</button></div></div>
+history(){const hf=window._hf||{};const f=hf.k?opMatch(hf.k,hf.id):()=>true;const list=[...S.ops].filter(o=>f(o)&&(!hf.m||o.date.startsWith(hf.m))).sort((a,b)=>b.date.localeCompare(a.date));const n=list.filter(o=>o.reviewed===false).length;const g={};list.forEach(o=>(g[o.date.slice(0,10)]=g[o.date.slice(0,10)]||[]).push(o));
+  V.innerHTML=`<div class="hdr"><h2>История</h2><div><button onclick="show('import')">⤓ Импорт</button> <button onclick="menu()">⋯</button></div></div>${histFilter()}
   ${n?`<div class="card" style="display:flex;justify-content:space-between;align-items:center"><span>Новых из банка: <b>${n}</b></span><button class="b s" style="width:auto;margin:0;font-size:14px" onclick="markAll()">Всё верно</button></div>`:''}
   ${Object.entries(g).map(([d,ops])=>{const sum=ops.reduce((x,o)=>x+(o.type==='expense'?-o.amount:o.type==='income'?o.amount:0),0);
    return `<div class="dayh"><span>${new Date(d).toLocaleDateString('ru-RU',{day:'numeric',month:'long',weekday:'short'})}</span><span>${fmt(sum)}</span></div>${ops.map(hrow).join('')}`;}).join('')||'<div class="card mut">Пока пусто. Перетащите кружок на главном экране или загрузите выписку.</div>'}`;},
@@ -161,6 +174,24 @@ async function moveCirc(d){const{k,it}=_ce;const list=k==='acc'?S.accounts:S.cat
 async function delCirc(){const{k,it}=_ce;const used=k==='acc'?S.ops.some(o=>o.accountId===it.id||o.toAccountId===it.id):false;
   if(used)return toast('По кошельку есть операции — сначала удалите их');if(!confirm('Удалить «'+it.name+'»?'))return;
   await del(k==='acc'?'accounts':'cats',it.id);closeSheet();refresh();}
+function histFilter(){const hf=window._hf||{};const cur=hf.k?hf.k+':'+hf.id:'';
+  const opt=(v,t)=>`<option value="${v}" ${v===cur?'selected':''}>${esc(t)}</option>`;
+  const months=[...new Set(S.ops.map(o=>o.date.slice(0,7)))].sort().reverse();
+  return `<div class="card flow" style="display:flex;gap:8px"><select style="flex:1" onchange="const[k,id]=this.value.split(':');window._hf={...(window._hf||{}),k:k||'',id};views.history()">${opt('','Все операции')}
+   <optgroup label="Доходы">${S.cats.filter(c=>c.income).map(c=>opt('inc:'+c.id,c.name)).join('')}</optgroup>
+   <optgroup label="Кошельки">${S.accounts.map(c=>opt('acc:'+c.id,c.name)).join('')}</optgroup>
+   <optgroup label="Расходы">${S.cats.filter(c=>!c.income).map(c=>opt('exp:'+c.id,c.name)).join('')}</optgroup></select>
+   <select style="flex:1" onchange="window._hf={...(window._hf||{}),m:this.value};views.history()"><option value="">Все месяцы</option>${months.map(m=>`<option value="${m}" ${m===hf.m?'selected':''}>${perLabel(m)}</option>`).join('')}</select></div>`;}
+// detail of one circle: its operations, period total, per-month totals
+function detail(k,id){const it=itemOf(k,id),f=opMatch(k,id);const all=S.ops.filter(f);const ops=all.filter(o=>o.date.startsWith(PER)).sort((a,b)=>b.date.localeCompare(a.date));
+  const tot=ops.reduce((s,o)=>s+opVal(k,id,o),0);const bm={};all.forEach(o=>{const m=o.date.slice(0,7);bm[m]=(bm[m]||0)+opVal(k,id,o);});
+  const add=k==='inc'?`opSheet({type:'income',category:'${esc(it.name)}'})`:k==='acc'?`opSheet({type:'expense',accountId:'${id}'})`:`opSheet({type:'expense',category:'${esc(it.name)}'})`;
+  V.innerHTML=`<div class="hdr"><h2>${esc(it.icon||'')} ${esc(it.name)}</h2><button onclick="show('home')">‹ Назад</button></div>
+  <div class="card"><div class="row"><span>${esc(perLabel(PER))}${k==='acc'?' (приход − расход)':''}</span><b class="${k==='exp'?'neg':'pos'}">${fmt(tot)}</b></div>
+  <button class="b" onclick="${add.replace(/"/g,'&quot;')}">+ Добавить</button>
+  <button class="b s" onclick="window._hf={k:'${k}',id:'${id}',m:PER};show('history')">Открыть в Истории</button></div>
+  <div class="card"><b>По месяцам</b>${Object.entries(bm).sort((a,b)=>b[0].localeCompare(a[0])).map(([m,v])=>`<div class="row" onclick="setPer('${m}')" style="cursor:pointer"><span>${perLabel(m)}</span><b>${fmt(v)}</b></div>`).join('')||'<div class="mut">Нет операций</div>'}</div>
+  <div class="card"><b>Операции (${ops.length})</b></div>${ops.slice(0,300).map(hrow).join('')}${ops.length>300?`<div class="mut">…ещё ${ops.length-300}, см. Историю</div>`:''}`;}
 // ---- drag & drop between circles ----
 let D=null;
 function circAt(x,y){const el=document.elementFromPoint(x,y);return el&&el.closest('.c:not(.add)');}
@@ -182,9 +213,7 @@ function dropOp(s,t){const a=s.dataset.k,b=t.dataset.k;
   else opSheet({type:'expense',accountId:s.dataset.id,category:itemOf('exp',t.dataset.id).name});}
 function tapCirc(c){const k=c.dataset.k,id=c.dataset.id;
   if(k==='add')return editCirc(c.dataset.add);
-  if(k==='inc')opSheet({type:'income',category:itemOf('inc',id).name});
-  else if(k==='acc')opSheet({type:'expense',accountId:id});
-  else opSheet({type:'expense',category:itemOf('exp',id).name});}
+  show('detail',{k,id});}
 V.addEventListener('contextmenu',e=>{if(e.target.closest('.c'))e.preventDefault();});
 // ---- import & review ----
 function cardAccFor(card){const d=String(card).replace(/\D/g,'').slice(-4);const cards=S.accounts.filter(a=>a.kind==='card');
@@ -242,7 +271,7 @@ function ssToReview(){const rows=ssRows.filter(r=>r.amount&&r.date).map(r=>({...
 // ---- CoinKeeper import ----
 let CK=null;
 const ckSkipped=()=>JSON.parse(localStorage.ckSkipped||'[]');
-const APP_VER='v11';
+const APP_VER='v12';
 let CKB=[];try{CKB=JSON.parse(localStorage.ckBanks||'[]');}catch(e){CKB=[];}
 function ckbStatus(){const el=$('#ckb');if(!el)return;el.innerHTML=CKB.length?'✅ Выписки загружены: '+CKB.map(b=>esc((b.accountId?accName(b.accountId):b.name)+' ('+b.ops.length+' операций)')).join(', ')+' <button class="b s" onclick="CKB=[];localStorage.removeItem(\'ckBanks\');ckbStatus();if(CK){CK=Core.planCoinKeeper(CK.items.map(i=>i.row),{accounts:S.accounts,cats:S.cats,ops:S.ops,skipped:ckSkipped()});CK.items.forEach(i=>{i.accept=i.action===\'add\'||i.action===\'link\'});renderCK();}">Сбросить</button>':'<span class="neg">⚠️ Выписки не загружены — подсказок банка не будет. Сначала нажмите кнопку выше.</span>';}
 async function ckBanks(files){CKB=[];for(const f of files){const r=Core.parseTBank(Core.decode(await f.arrayBuffer()));if(r.ops.length)CKB.push({name:f.name,ops:r.ops});}
@@ -305,7 +334,7 @@ async function importJSON(f){const d=JSON.parse(await f.text());if(!confirm('З�
   for(const s of ['accounts','ops','cats']){for(const x of S[s])await del(s,x.id);for(const x of d[s]||[])await put(s,x);}await load();show('home');}
 // ---- nav ----// ---- nav ----
 let cur='home';
-function show(v,arg){cur=v;document.querySelectorAll('#bar nav button').forEach(b=>b.classList.toggle('on',b.dataset.v===v||(v==='import'&&b.dataset.v==='history')));header();views[v](arg);window.scrollTo(0,0);}
+function show(v,arg){cur=v;if(arg!==undefined)window._arg=arg;document.querySelectorAll('#bar nav button').forEach(b=>b.classList.toggle('on',b.dataset.v===v||(v==='import'&&b.dataset.v==='history')));header();views[v](arg);window.scrollTo(0,0);}
 document.querySelectorAll('#bar nav button').forEach(b=>b.onclick=()=>show(b.dataset.v));
 $('#plus').onclick=()=>opSheet({type:'expense'});
 openDB().then(d=>{db=d;return load();}).then(()=>{show('home');runSync();});
