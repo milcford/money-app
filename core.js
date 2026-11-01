@@ -244,6 +244,26 @@ function balances(accounts,ops){const b={};accounts.forEach(a=>b[a.id]=+a.initia
   for(const o of ops){ if(o.type==='expense')b[o.accountId]-=o.amount; else if(o.type==='income')b[o.accountId]+=o.amount;
     else if(o.type==='transfer'){b[o.accountId]-=o.amount;b[o.toAccountId]+=o.amount;} }
   return b;}
-root.Core={ownToTransfer,OWN,suggestCoinKeeper,guessBankAccount,bankKind,parseCoinKeeper,planCoinKeeper,decideOp,parseScreenshotText,screenshotIds,similar,decode,parseTBank,reconcile,balances,hash,isCash};
+// ---- Yandex Bank «Выписка по договору» (PDF) — best effort (beta) ----
+// lines: text lines of the PDF in reading order. Returns {ops,skipped,errors,closing}
+function parseYandexText(lines){const D=/(\d{2})\.(\d{2})\.(\d{4})/,AM=/([+\-−–]?)\s?(\d{1,3}(?:[ \u00a0\u202f]\d{3})*(?:[.,]\d{2}))\s*(?:₽|RUB|руб)?/g;
+  const SKIP=/^(выписка|клиент|договор|период|номер сч|сч[её]т №|фио|адрес|дата формирования)|(входящий|исходящий)\s+остаток|итого|всего\s+(расход|приход)|баланс на|страниц|^описание|дата\s+(операции|обработки)|сумма в валюте/i;
+  const ops=[],seen={};let cur=null,closing=null,desc=[];
+  const flush=()=>{if(!cur)return;cur.desc=cur.desc.replace(/\s+/g,' ').trim();
+    if(cur.sign==='')cur.amount=/(пополн|зачисл|перевод от|входящ|возврат|кешб[эе]к|проценты|начислен)/i.test(cur.desc)?Math.abs(cur.amount):-Math.abs(cur.amount);
+    const base=['y',cur.date,cur.amount.toFixed(2),norm(cur.desc)].join('|');seen[base]=(seen[base]||0)+1;
+    ops.push({bankId:hash(base+'#'+seen[base]),date:cur.date,amount:cur.amount,currency:'RUB',card:cur.card||'',desc:cur.desc,bankCategory:'',mcc:''});cur=null;};
+  for(let raw of lines){const l=String(raw).replace(/\s+/g,' ').trim();if(!l)continue;
+    const cl=l.match(/исходящий\s+остаток[^\d+\-−]*([+\-−]?\s?\d[\d \u00a0]*[.,]\d{2})/i);if(cl){closing=num(cl[1].replace(/[−–]/,'-'));continue;}
+    if(SKIP.test(l))continue;
+    const dm=l.match(D);const am=[...l.matchAll(AM)].filter(m=>!/^\d{2}\.\d{2}$/.test(m[2]));
+    if(dm&&am.length){flush();const m=am[am.length-1];const sign=m[1]==='+'?'+':m[1]?'-':'';
+      const v=num(m[2]);const tm=l.match(/(\d{2}):(\d{2})/);const card=(l.match(/\*{1,4}\s?(\d{4})/)||[])[1];
+      let d=(desc.join(' ')+' '+l.slice(0,dm.index).replace(AM,'')).trim();desc=[];
+      cur={date:`${dm[3]}-${dm[2]}-${dm[1]}T${tm?tm[1]+':'+tm[2]:'00:00'}:00`,amount:sign==='+'?v:sign?-v:v,sign,desc:d,card};continue;}
+    if(cur&&/^в \d{2}:\d{2}$/.test(l)){const t=l.match(/(\d{2}):(\d{2})/);cur.date=cur.date.slice(0,11)+t[1]+':'+t[2]+':00';continue;}
+    desc.push(l.replace(AM,'').trim());}
+  flush();return {ops,skipped:0,errors:ops.length?[]:['Не удалось найти операции в выписке Яндекс Банка'],closing};}
+root.Core={parseYandexText,ownToTransfer,OWN,suggestCoinKeeper,guessBankAccount,bankKind,parseCoinKeeper,planCoinKeeper,decideOp,parseScreenshotText,screenshotIds,similar,decode,parseTBank,reconcile,balances,hash,isCash};
 if(typeof module!=='undefined')module.exports=root.Core;
 })(typeof self!=='undefined'?self:globalThis);

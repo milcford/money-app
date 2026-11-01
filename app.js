@@ -61,6 +61,10 @@ const accName=id=>(S.accounts.find(a=>a.id===id)||S.accounts.map(a=>blackFor(a.i
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const today=()=>new Date(Date.now()-new Date().getTimezoneOffset()*6e4).toISOString().slice(0,10);
 const month=()=>today().slice(0,7);
+const BANKS=[['tbank','Т‑Банк'],['yandex','Яндекс Банк (бета)'],['other','Другой банк']];
+const bankOf=a=>a.kind!=='card'?'':(a.bank||'tbank');
+const liveAccs=()=>S.accounts.filter(a=>!a.archived);
+const bankAccs=()=>liveAccs().filter(a=>a.kind==='card');
 const accOpts=sel=>S.accounts.map(a=>`<option value="${a.id}" ${a.id===sel?'selected':''}>${esc(a.name)}</option>`).join('');
 function toast(t){const e=$('#toast');e.textContent=t;e.style.display='block';clearTimeout(e._t);e._t=setTimeout(()=>e.style.display='none',2000);}
 function openSheet(h){$('#sheet').innerHTML=h;$('#sheetbg').style.display='block';requestAnimationFrame(()=>$('#sheet').classList.add('open'));}
@@ -115,7 +119,7 @@ const views={
 detail(a){a=a||window._arg;if(a)detail(a.k,a.id);},
 home(){const m=monthSums(PER),b=Core.balances(S.accounts,S.ops);
   const inc=S.cats.filter(c=>c.income).map(c=>circ('inc',c,m.byInc[c.name]));inc.push(addCirc('inc'));
-  const acc=S.accounts.map(a=>circ('acc',a,b[a.id]));acc.push(addCirc('acc'));
+  const acc=liveAccs().map(a=>circ('acc',a,b[a.id]));acc.push(addCirc('acc'));
   const ex=S.cats.filter(c=>!c.income).map(c=>circ('exp',c,m.byCat[c.name]));ex.push(addCirc('exp'));
   V.innerHTML=`<div class="sect">${pager(inc,4,'p1')}</div><div class="sect">${pager(acc,4,'p2')}</div><div class="sect" style="border:0">${pager(ex,12,'p3')}</div>
   <div class="mut" style="text-align:center;margin-top:6px">Перетащите кружок на другой: доход → кошелёк, кошелёк → кошелёк, кошелёк → категория. Удержание — настройка.</div>`;},
@@ -129,12 +133,14 @@ history(){const hf=window._hf||{};const f=hf.k?opMatch(hf.k,hf.id):()=>true;cons
   ${Object.entries(g).map(([d,ops])=>{const sum=ops.reduce((x,o)=>x+(o.type==='expense'?-o.amount:o.type==='income'?o.amount:0),0);
    return `<div class="dayh"><span>${new Date(d).toLocaleDateString('ru-RU',{day:'numeric',month:'long',weekday:'short'})}</span><span>${fmt(sum)}</span></div>${ops.map(hrow).join('')}`;}).join('')||'<div class="card mut">Пока пусто. Перетащите кружок на главном экране или загрузите выписку.</div>'}`;},
 import(){V.innerHTML=`<div class="hdr"><h2>Импорт <span class="mut" style="font-size:13px">версия ${APP_VER}</span></h2><button onclick="show('history')">‹ Назад</button></div>
-  <div class="card"><b>1. Выписка Т‑Банка (CSV)</b><p class="mut">В приложении Т‑Банка: Счёт → Выписка → CSV. Повторная или пересекающаяся выписка дублей не создаст. <b>Это добавляет операции банка в приложение.</b> Для переноса из CoinKeeper используйте блок 3, а не этот.</p>${(()=>{const n=S.ops.filter(o=>(o.bankIds||[]).some(b=>!String(b).startsWith('ck:'))&&!(o.bankIds||[]).some(b=>String(b).startsWith('ck:'))).length;return n?`<div class="mut">Сейчас в приложении операций из выписок: ${n}. <button class="b s" onclick="delBankOps()">Удалить их</button></div>`:'';})()}
-  <label class="mut">Если в файле нет номера карты — на какой счёт</label><select id="csv_acc">${S.accounts.filter(a=>a.kind==='card').map(a=>`<option value="${a.id}">${esc(a.name)}</option>`).join('')}</select>
-  <label class="b">Выбрать CSV<input type="file" accept=".csv,text/csv" hidden onchange="doImport(this.files[0])"></label></div>
+  <div class="card"><b>1. Выписка банка</b><p class="mut">В приложении Т‑Банка: Счёт → Выписка → CSV. Повторная или пересекающаяся выписка дублей не создаст. <b>Это добавляет операции банка в приложение.</b> Для переноса из CoinKeeper используйте блок 3, а не этот.</p>${(()=>{const n=S.ops.filter(o=>(o.bankIds||[]).some(b=>!String(b).startsWith('ck:'))&&!(o.bankIds||[]).some(b=>String(b).startsWith('ck:'))).length;return n?`<div class="mut">Сейчас в приложении операций из выписок: ${n}. <button class="b s" onclick="delBankOps()">Удалить их</button></div>`:'';})()}
+  <label class="mut">Если в файле нет номера карты — на какой счёт</label><select id="csv_acc">${bankAccs().map(a=>`<option value="${a.id}">${esc(a.name)} · ${esc((BANKS.find(b=>b[0]===bankOf(a))||[])[1]||'')}</option>`).join('')}</select>
+  <label class="b">Выбрать файл выписки<input type="file" accept=".csv,text/csv,.pdf,application/pdf" hidden onchange="doImport(this.files[0])"></label>
+  <div class="mut">Т‑Банк — CSV. Яндекс Банк — PDF «Выписка по договору» (Профиль → Справки → Выписка по договору). Яндекс — бета: если что-то распознается не так, пришлите пример выписки.</div>
+  <button class="b s" onclick="editCirc('acc')">+ Добавить счёт</button></div>
   ${ownOps().length?`<div class="card"><b>Счета Tinkoff Black</b><p class="mut">Операции «между своими счетами Т‑Банка» записаны как доход/расход. На самом деле это переводы с/на счёт Black (Мама Black, Аня Black).</p><button class="b" onclick="migrateOwn()">Перенести переводы между своими счетами на Black (${ownOps().length} операций)</button></div>`:''}
   <div class="card"><b>2. Скриншоты списка операций</b><p class="mut">Скриншоты экрана «Операции» Т‑Банка, можно несколько. Распознавание идёт на телефоне.</p>
-  <label class="mut">На какой счёт</label><select id="ss_acc">${S.accounts.filter(a=>a.kind==='card').map(a=>`<option value="${a.id}">${esc(a.name)}</option>`).join('')}</select>
+  <label class="mut">На какой счёт</label><select id="ss_acc">${bankAccs().map(a=>`<option value="${a.id}">${esc(a.name)}</option>`).join('')}</select>
   <label class="b">Выбрать скриншоты<input type="file" accept="image/*" multiple hidden onchange="doShots(this.files)"></label><div id="ss_prog" class="mut"></div></div>
   <div class="card"><b>3. Перенос из CoinKeeper (CSV)</b><p class="mut">Экспорт CoinKeeper: Настройки → Экспорт данных → CSV. Кошельки, источники и категории сопоставляются по названию, недостающие создаются. Повторный импорт безопасен.</p>
   <p class="mut">Шаг А: нажмите «Выписки Т‑Банка для подсказок» и выберите <b>оба</b> файла сразу (Аня и Мама). Шаг Б: выберите CSV CoinKeeper. Решения подставятся по банку.</p><label class="b s">А. Выписки Т‑Банка для подсказок<input type="file" accept=".csv,text/csv" multiple hidden onchange="ckBanks(this.files)"></label> <span class="mut" id="ckb"></span>
@@ -149,7 +155,7 @@ function hrow(o){const[ic,col]=opIcon(o);const t=o.type==='transfer'?`${accName(
   <div class="t"><div>${esc(t)}</div><div class="mut">${esc(sub)}${o.note?' · '+esc(o.note):''} ${(o.bankIds||[]).some(b=>!String(b).startsWith('ck:'))?'<span class="tag">банк</span>':''}</div></div>
   <b class="${o.type==='expense'?'neg':o.type==='income'?'pos':''}">${o.type==='expense'?'−':o.type==='income'?'+':''}${fmt(o.amount)}</b></div>`;}
 async function markAll(){for(const o of S.ops)if(o.reviewed===false){o.reviewed=true;await put('ops',o);}refresh();}
-function menu(){openSheet(`<b>Меню</b><button class="b s" onclick="closeSheet();show('import')">Импорт CSV / скриншоты</button>
+function menu(){openSheet(`<b>Меню</b><button class="b s" onclick="closeSheet();editCirc('acc')">+ Добавить счёт</button>${S.accounts.some(a=>a.archived)?`<div class="mut">Архив: ${S.accounts.filter(a=>a.archived).map(a=>`<a href="#" onclick="closeSheet();editCirc('acc','${a.id}');return false">${esc(a.name)}</a>`).join(', ')}</div>`:''}<button class="b s" onclick="closeSheet();show('import')">Импорт CSV / скриншоты</button>
   <button class="b s" onclick="exportJSON()">Скачать резервную копию (JSON)</button><label class="b s">Восстановить из JSON<input type="file" accept=".json" hidden onchange="importJSON(this.files[0])"></label>
   <button class="b s" onclick="syncSheet()">☁ Синхронизация</button><button class="b s" onclick="closeSheet();renameProfile()">Название профиля</button><button class="b s" onclick="closeSheet()">Закрыть</button>`);}
 // ---- operation sheet with numpad ----
@@ -182,14 +188,16 @@ function editCirc(k,id){const it=id?{...itemOf(k,id)}:k==='acc'?{id:uid(),name:'
   openSheet(`<b>${id?'':'Новый: '}${t}</b><input id="ce_name" placeholder="Название" value="${esc(it.name)}">
   <div class="flow"><input id="ce_icon" placeholder="Иконка (эмодзи)" value="${esc(it.icon)}" style="width:90px;flex:none;text-align:center;font-size:24px"><div class="mut">Любой эмодзи: 🛒 🍕 🚕 💊 🎁 ✈️ 🐶</div></div>
   <div class="swatch">${PALETTE.map(c=>`<button style="background:${c}" class="${c===it.color?'on':''}" onclick="_ce.it.color='${c}';this.parentNode.querySelectorAll('button').forEach(b=>b.classList.remove('on'));this.classList.add('on')"></button>`).join('')}</div>
-  ${k==='acc'?`<label class="mut">Тип</label><select id="ce_kind">${[['cash','Наличные'],['savings','Накопления (не в балансе)'],['card','Карта']].map(([v,n])=>`<option value="${v}" ${it.kind===v?'selected':''}>${n}</option>`).join('')}</select>
+  ${k==='acc'?`<label class="mut">Тип</label><select id="ce_kind" onchange="$('#ce_bankw').style.display=this.value==='card'?'':'none'">${[['card','Банковский счёт / карта'],['cash','Наличные'],['savings','Накопления (не в балансе)']].map(([v,n])=>`<option value="${v}" ${it.kind===v?'selected':''}>${n}</option>`).join('')}</select>
+   <div id="ce_bankw" style="${it.kind==='card'?'':'display:none'}"><label class="mut">Банк (какой формат выписки)</label><select id="ce_bank">${BANKS.map(([v,n])=>`<option value="${v}" ${bankOf(it)===v?'selected':''}>${n}</option>`).join('')}</select></div>
    <label class="mut">Начальный остаток, ₽</label><input id="ce_init" inputmode="decimal" value="${it.initial||''}" placeholder="0">
    <label class="mut">Последние 4 цифры карты (для импорта)</label><input id="ce_mask" inputmode="numeric" maxlength="4" value="${esc(it.cardMask||'')}" placeholder="1234">`:''}
   <button class="b" onclick="saveCirc()">Сохранить</button>
-  ${id?`<div class="flow"><button class="b s" onclick="moveCirc(-1)">← Левее</button><button class="b s" onclick="moveCirc(1)">Правее →</button></div><button class="b r" onclick="delCirc()">Удалить</button>`:''}`);}
+  ${id?`<div class="flow"><button class="b s" onclick="moveCirc(-1)">← Левее</button><button class="b s" onclick="moveCirc(1)">Правее →</button></div>${k==='acc'?`<button class="b s" onclick="archAcc()">${it.archived?'Вернуть из архива':'В архив (скрыть, операции останутся)'}</button>`:''}<button class="b r" onclick="delCirc()">Удалить</button>`:''}`);}
+async function archAcc(){const a=_ce.it;a.archived=!a.archived;await put('accounts',a);closeSheet();refresh();toast(a.archived?'Счёт в архиве':'Счёт возвращён');}
 async function saveCirc(){const{k,it}=_ce;const name=$('#ce_name').value.trim();if(!name)return toast('Введите название');
   const oldName=it.name;it.name=name;it.icon=$('#ce_icon').value.trim()||'•';
-  if(k==='acc'){it.kind=$('#ce_kind').value;it.initial=parseFloat($('#ce_init').value.replace(',','.').replace(/\s/g,''))||0;it.cardMask=$('#ce_mask').value.replace(/\D/g,'');await put('accounts',it);}
+  if(k==='acc'){it.kind=$('#ce_kind').value;it.initial=parseFloat($('#ce_init').value.replace(',','.').replace(/\s/g,''))||0;it.cardMask=$('#ce_mask').value.replace(/\D/g,'');if(it.kind==='card')it.bank=$('#ce_bank').value;else delete it.bank;await put('accounts',it);}
   else{await put('cats',it);if(oldName&&oldName!==name)for(const o of S.ops)if(o.category===oldName&&(o.type==='income')===it.income){o.category=name;await put('ops',o);}}
   closeSheet();refresh();}
 async function moveCirc(d){const{k,it}=_ce;const list=k==='acc'?S.accounts:S.cats.filter(c=>c.income===(k==='inc'));const i=list.findIndex(x=>x.id===it.id),j=i+d;if(j<0||j>=list.length)return;
@@ -242,16 +250,27 @@ function tapCirc(c){const k=c.dataset.k,id=c.dataset.id;
   show('detail',{k,id});}
 V.addEventListener('contextmenu',e=>{if(e.target.closest('.c'))e.preventDefault();});
 // ---- import & review ----
-function cardAccFor(card){const d=String(card).replace(/\D/g,'').slice(-4);const cards=S.accounts.filter(a=>a.kind==='card');
+function cardAccFor(card,bank){const d=String(card).replace(/\D/g,'').slice(-4);const cards=bankAccs().filter(a=>!bank||bankOf(a)===bank||a.id===($('#csv_acc')||{}).value);
   return (d&&cards.find(a=>a.cardMask&&String(a.cardMask).replace(/\D/g,'').slice(-4)===d)||cards.find(a=>a.id===($('#csv_acc')||{}).value)||cards[0]).id;}
 function guessCat(op){if(op.amount>0){const inc=S.cats.filter(c=>c.income);return (inc.find(c=>c.name==='Прочее')||inc[inc.length-1]||{name:'Прочее'}).name;}
   const ex=S.cats.filter(c=>!c.income),t=(op.bankCategory+' '+op.desc).toLowerCase();const m=ex.find(c=>t.includes(c.name.toLowerCase()));if(m)return m.name;
   const map=[[/супермаркет|продукт/,'Продукты'],[/ресторан|кафе|фастфуд/,'Еда вне дома'],[/транспорт|такси|метро|топливо|азс/,'Транспорт'],[/развлеч|кино/,'Развлечения'],[/одежд|маркетплейс|ozon|wildberries/,'Покупки'],[/красот|парикмах/,'парикмахерская'],[/ремонт|дом/,'Ремонт']];
   for(const[r,n]of map)if(r.test(t)&&ex.find(c=>c.name===n))return n;return (ex.find(c=>c.name==='Прочее')||ex[0]||{name:'Прочее'}).name;}
 let pending=[];
-async function doImport(file){const text=Core.decode(await file.arrayBuffer());const r=Core.parseTBank(text);if(r.errors.length)return alert(r.errors.join('\n'));
+async function pdfLines(file){toast('Читаю PDF…');const pdfjs=await import('https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.min.mjs');
+  pdfjs.GlobalWorkerOptions.workerSrc='https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.min.mjs';
+  const doc=await pdfjs.getDocument({data:new Uint8Array(await file.arrayBuffer())}).promise;const out=[];
+  for(let p=1;p<=doc.numPages;p++){const tc=await (await doc.getPage(p)).getTextContent();const rows={};
+    for(const it of tc.items){if(!it.str.trim())continue;const y=Math.round(it.transform[5]/3);(rows[y]=rows[y]||[]).push(it);}
+    Object.keys(rows).map(Number).sort((a,b)=>b-a).forEach(y=>out.push(rows[y].sort((a,b)=>a.transform[4]-b.transform[4]).map(i=>i.str).join(' ')));}
+  return out;}
+async function doImport(file){const sel=S.accounts.find(a=>a.id===($('#csv_acc')||{}).value)||{};const isPdf=/\.pdf$/i.test(file.name)||file.type==='application/pdf';
+  let r;try{if(isPdf||bankOf(sel)==='yandex'){if(!isPdf)return alert('Для Яндекс Банка нужен PDF «Выписка по договору».');r=Core.parseYandexText(await pdfLines(file));r.bank='yandex';}
+  else{r=Core.parseTBank(Core.decode(await file.arrayBuffer()));r.bank='tbank';}}catch(e){return alert('Не удалось прочитать файл: '+e.message);}
+  if(r.errors.length)return alert(r.errors.join('\n')+(r.bank==='yandex'?'\n\nЯндекс — бета. Пришлите эту выписку, доработаю разбор.':''));
+  if(r.bank==='yandex')r.ops.forEach(o=>o.card='');
   // group by card account
-  const groups={};r.ops.forEach(o=>{const a=cardAccFor(o.card);(groups[a]=groups[a]||[]).push(o);});
+  const groups={};r.ops.forEach(o=>{const a=cardAccFor(o.card,r.bank);(groups[a]=groups[a]||[]).push(o);});
   pending=[];for(const a in groups)pending.push(...Core.reconcile(groups[a],S.ops,a,'cash',(blackFor(a)||{}).id,pairOf(a)).map(p=>({...p,card:a,accept:p.action!=='duplicate'})));
   IMP={closing:r.closing,accs:Object.keys(groups)};renderReview(r.skipped);}
 let IMP={};
@@ -305,7 +324,7 @@ function ssToReview(){const rows=ssRows.filter(r=>r.amount&&r.date).map(r=>({...
 // ---- CoinKeeper import ----
 let CK=null;
 const ckSkipped=()=>JSON.parse(localStorage.ckSkipped||'[]');
-const APP_VER='v16';
+const APP_VER='v17';
 let CKB=[];try{CKB=JSON.parse(localStorage.ckBanks||'[]');}catch(e){CKB=[];}
 function ckbStatus(){const el=$('#ckb');if(!el)return;el.innerHTML=CKB.length?'✅ Выписки загружены: '+CKB.map(b=>esc((b.accountId?accName(b.accountId):b.name)+' ('+b.ops.length+' операций)')).join(', ')+' <button class="b s" onclick="CKB=[];localStorage.removeItem(\'ckBanks\');ckbStatus();if(CK){CK=Core.planCoinKeeper(CK.items.map(i=>i.row),{accounts:S.accounts,cats:S.cats,ops:S.ops,skipped:ckSkipped()});CK.items.forEach(i=>{i.accept=i.action===\'add\'||i.action===\'link\'});renderCK();}">Сбросить</button>':'<span class="neg">⚠️ Выписки не загружены — подсказок банка не будет. Сначала нажмите кнопку выше.</span>';}
 async function ckBanks(files){CKB=[];for(const f of files){const r=Core.parseTBank(Core.decode(await f.arrayBuffer()));if(r.ops.length)CKB.push({name:f.name,ops:r.ops});}
