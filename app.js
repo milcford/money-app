@@ -314,6 +314,9 @@ async function doImport(file){const sel=S.accounts.find(a=>a.id===($('#csv_acc')
     pending.push(...Core.reconcile(groups[a],S.ops,a,'cash',(blackFor(a)||{}).id,pairOf(a),bankAccs().map(x=>x.id).filter(x=>x!==a)).map(p=>({...p,card:a,old:!!st&&p.op.date.slice(0,10)<st,accept:p.action!=='duplicate'&&!(st&&p.op.date.slice(0,10)<st)})));}
   IMP={closing:r.closing,accs:Object.keys(groups)};renderReview(r.skipped);}
 let IMP={};
+function scrollEnd(){const e=$('#rv_end');if(e)e.scrollIntoView({behavior:'smooth',block:'end'});}
+function updApply(){const b=$('#rv_apply');if(!b)return;const n=[...document.querySelectorAll('#review input[type=checkbox]')].filter(x=>x.checked).length;b.textContent=`${b.dataset.lbl} (${n} операций)`;}
+document.addEventListener('change',e=>{if(e.target.closest&&e.target.closest('#review'))updApply();});
 function renderReview(skipped){const dup=pending.filter(p=>p.action==='duplicate').length;const L={convert:'Перевод между своими счетами: исправить запись на другом счёте (станет переводом)',link:'Связать с ручной записью',transfer:'Перевод наличные ⇄ карта',add:'Новая операция'};
   $('#review').innerHTML=`<div class="card"><b>Проверка</b><div class="mut">Уже загружено ранее (пропущено): ${dup}. Отклонённых/неуспешных строк: ${skipped}.</div>${pending.some(p=>p.old)?`<div class="mut">Строки раньше начала истории счёта (${pending.filter(p=>p.old).length}) не отмечены: они уже учтены в начальном остатке.</div>`:''}</div>
   ${['convert','link','transfer','add'].map(k=>{const it=pending.map((p,i)=>[p,i]).filter(([p])=>p.action===k);if(!it.length)return'';
@@ -322,7 +325,7 @@ function renderReview(skipped){const dup=pending.filter(p=>p.action==='duplicate
     ${k==='transfer'?'<div class="mut">Снимите галочку, если это не наличные — тогда будет добавлено как обычная операция.</div>':''}</div>`;}).join('')}
   <div class="card"><b>Остаток на счёте</b><div class="mut">${IMP.closing!=null?'В выписке указан остаток — он подставлен.':'В выписке Т‑Банка остатка нет. Введите текущий остаток из приложения банка — баланс кошелька подгоним под него (необязательно).'}</div>
    ${(IMP.accs||[]).map(id=>`<label class="mut">${esc(accName(id))}, ₽</label><input type="number" step="0.01" inputmode="decimal" id="bal_${id}" value="${IMP.closing!=null&&IMP.accs.length===1?IMP.closing:''}">`).join('')}</div>
-  <button class="b" onclick="applyImport()">Применить</button>`;}
+  <div id="rv_end"></div><div class="stick"><button class="b s" onclick="scrollEnd()">↓ Вниз</button><button class="b" id="rv_apply" data-lbl="Применить" onclick="applyImport()">Применить</button></div>`;setTimeout(updApply);}
 async function applyImport(){let n=0;const bals={};(IMP.accs||[]).forEach(id=>{const v=parseFloat((($('#bal_'+id)||{}).value||'').replace(',','.'));if(!isNaN(v))bals[id]=v;});
   for(const p of pending){const op=p.op;if(p.action==='duplicate')continue;
   if(p.action==='convert'){const t=S.ops.find(o=>o.id===p.target);if(p.accept){await put('ops',{...t,type:'transfer',category:'',accountId:p.from,toAccountId:p.to,bankIds:[...(t.bankIds||[]),op.bankId],sides:[t.accountId,p.card],note:t.note||op.desc});n++;continue;}}
@@ -364,7 +367,7 @@ function ssToReview(){const rows=ssRows.filter(r=>r.amount&&r.date).map(r=>({...
 // ---- CoinKeeper import ----
 let CK=null;
 const ckSkipped=()=>JSON.parse(localStorage.ckSkipped||'[]');
-const APP_VER='v24';
+const APP_VER='v25';
 let CKB=[];try{CKB=JSON.parse(localStorage.ckBanks||'[]');}catch(e){CKB=[];}
 function ckbStatus(){const el=$('#ckb');if(!el)return;el.innerHTML=CKB.length?'✅ Выписки загружены: '+CKB.map(b=>esc((b.accountId?accName(b.accountId):b.name)+' ('+b.ops.length+' операций)')).join(', ')+' <button class="b s" onclick="CKB=[];localStorage.removeItem(\'ckBanks\');ckbStatus();if(CK){CK=Core.planCoinKeeper(CK.items.map(i=>i.row),{accounts:S.accounts,cats:S.cats,ops:S.ops,skipped:ckSkipped()});CK.items.forEach(i=>{i.accept=i.action===\'add\'||i.action===\'link\'});renderCK();}">Сбросить</button>':'<span class="neg">⚠️ Выписки не загружены — подсказок банка не будет. Сначала нажмите кнопку выше.</span>';}
 async function ckBanks(files){CKB=[];for(const f of files){const r=Core.parseTBank(Core.decode(await f.arrayBuffer()));if(r.ops.length)CKB.push({name:f.name,ops:r.ops});}
@@ -409,7 +412,7 @@ function renderCK(){const it=CK.items,g=a=>it.map((x,n)=>[x,n]).filter(([x])=>x.
    ${pd.map(([x,n])=>ckRow(x,n,`<input type="checkbox" style="width:auto" ${x.accept?'checked':''} onchange="CK.items[${n}].accept=this.checked">`)).join('')}</div>`:''}
   ${ln.length?`<div class="card"><b>Совпадают с уже загруженными из банка (${ln.length})</b><div class="mut">Будут связаны, а не добавлены.</div>${ln.slice(0,30).map(([x,n])=>ckRow(x,n)).join('')}</div>`:''}
   ${ad.length?`<div class="card"><label class="row"><span><b>Новые операции (${ad.length})</b></span><input type="checkbox" style="width:auto" ${ad[0][0].accept?'checked':''} onchange="CK.items.forEach(i=>{if(i.action==='add')i.accept=this.checked})"></label>${ad.slice(0,20).map(([x,n])=>ckRow(x,n)).join('')}${ad.length>20?`<div class="mut">…и ещё ${ad.length-20}</div>`:''}</div>`:''}
-  <button class="b" onclick="applyCK()">Импортировать</button>`;if(!ckScrolled){$('#review').scrollIntoView();ckScrolled=true;}}
+  <div id="rv_end"></div><div class="stick"><button class="b s" onclick="scrollEnd()">↓ Вниз</button><button class="b" id="rv_apply" data-lbl="Импортировать" onclick="applyCK()">Импортировать</button></div>`;setTimeout(updApply);if(!ckScrolled){$('#review').scrollIntoView();ckScrolled=true;}}
 let ckScrolled=false;
 function ckAll(c){CK.items.forEach(i=>{if(i.action==='decide')i.choice=c==='sug'?(i.sugChoice||i.choice):c==='cat'?(i.inflow?'income':'expense'):c;});renderCK();}
 async function applyCK(){const btn=event.target;btn.disabled=true;btn.textContent='Импорт…';
