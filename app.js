@@ -178,8 +178,12 @@ function renderOp(){const cats=S.cats.filter(c=>c.income===(E.type==='income'));
    `<select onchange="E.accountId=this.value">${accOpts(E.accountId)}</select> → <select onchange="E.category=this.value">${cats.map(c=>`<option ${c.name===E.category?'selected':''}>${esc(c.icon||'')} ${esc(c.name)}</option>`).join('')}</select>`}</div>
   <div class="disp ${E.type==='expense'?'neg':E.type==='income'?'pos':''}" id="disp">${esc(E.amount||'0')} ₽</div>
   <div class="pad">${['1','2','3','4','5','6','7','8','9',',','0','⌫'].map(k=>`<button onclick="key('${k}')">${k}</button>`).join('')}</div>
-  <div class="flow"><input type="date" value="${E.date.slice(0,10)}" onchange="E.date=this.value" style="flex:1"><input placeholder="Комментарий" value="${esc(E.note)}" oninput="E.note=this.value" style="flex:1.4"></div>
-  <button class="b" onclick="saveOp()">${E.id?'Сохранить':'Готово'}</button>${E.id?`<button class="b r" onclick="delOp('${E.id}')">Удалить</button>`:''}`);}
+  <div class="flow"><input type="date" value="${E.date.slice(0,10)}" onchange="E.date=this.value+(E.date.length>10?E.date.slice(10):'')" style="flex:1"><input placeholder="Комментарий" value="${esc(E.note)}" oninput="E.note=this.value" style="flex:1.4"></div>
+  ${E.id?`<div class="flow"><button class="b s" onclick="moveOpUI(-1)">↑ Выше</button><button class="b s" onclick="moveOpUI(1)">↓ Ниже</button></div>`:''}<button class="b" onclick="saveOp()">${E.id?'Сохранить':'Готово'}</button>${E.id?`<button class="b r" onclick="delOp('${E.id}')">Удалить</button>`:''}`);}
+async function moveOpUI(dir){const list=(LASTLIST.some(o=>o.id===E.id)?LASTLIST:S.ops).map(o=>S.ops.find(x=>x.id===o.id)||o);
+  const ch=Core.moveOp(list,E.id,dir);if(!ch.length)return toast(dir<0?'Уже первая за день':'Уже последняя за день');
+  for(const o of ch){const cur=S.ops.find(x=>x.id===o.id);Object.assign(cur,{date:o.date});await put('ops',{...cur});if(o.id===E.id)E.date=o.date;}
+  S.ops=await all('ops');refreshView();toast(dir<0?'Поднято':'Опущено');}
 function key(k){let a=E.amount||'';if(k==='⌫')a=a.slice(0,-1);else if(k===','){if(!a.includes(','))a=(a||'0')+',';}else if(!/,\d\d$/.test(a))a=a==='0'?k:a+k;E.amount=a;$('#disp').textContent=(a||'0')+' ₽';}
 async function saveOp(){const a=parseFloat(String(E.amount).replace(',','.'));if(!(a>0))return toast('Введите сумму');
   if(E.type==='transfer'&&E.accountId===E.toAccountId)return toast('Счета должны различаться');
@@ -235,7 +239,8 @@ async function moveCirc(d){const{k,it}=_ce;const list=k==='acc'?S.accounts:S.cat
 async function delCirc(){const{k,it}=_ce;const used=k==='acc'?S.ops.some(o=>o.accountId===it.id||o.toAccountId===it.id):false;
   if(used)return toast('По кошельку есть операции — сначала удалите их');if(!confirm('Удалить «'+it.name+'»?'))return;
   await del(k==='acc'?'accounts':'cats',it.id);closeSheet();refresh();}
-function dayGroups(list){const g={};[...list].sort(Core.opCmp).forEach(o=>(g[o.date.slice(0,10)]=g[o.date.slice(0,10)]||[]).push(o));
+let LASTLIST=[];
+function dayGroups(list){LASTLIST=list;const g={};[...list].sort(Core.opCmp).forEach(o=>(g[o.date.slice(0,10)]=g[o.date.slice(0,10)]||[]).push(o));
   return Object.entries(g).map(([d,ops])=>{const sum=ops.reduce((x,o)=>x+(o.type==='expense'?-o.amount:o.type==='income'?o.amount:0),0);
    return `<div class="dayh"><span>${new Date(d).toLocaleDateString('ru-RU',{day:'numeric',month:'long',year:d.slice(0,4)===today().slice(0,4)?undefined:'numeric',weekday:'short'})}</span><span>${fmt(sum)}</span></div>${ops.map(hrow).join('')}`;}).join('');}
 function histFilter(){const hf=window._hf||{};const cur=hf.k?hf.k+':'+hf.id:'';
@@ -375,7 +380,7 @@ function ssToReview(){const rows=ssRows.filter(r=>r.amount&&r.date).map(r=>({...
 // ---- CoinKeeper import ----
 let CK=null;
 const ckSkipped=()=>JSON.parse(localStorage.ckSkipped||'[]');
-const APP_VER='v28';
+const APP_VER='v29';
 let CKB=[];try{CKB=JSON.parse(localStorage.ckBanks||'[]');}catch(e){CKB=[];}
 function ckbStatus(){const el=$('#ckb');if(!el)return;el.innerHTML=CKB.length?'✅ Выписки загружены: '+CKB.map(b=>esc((b.accountId?accName(b.accountId):b.name)+' ('+b.ops.length+' операций)')).join(', ')+' <button class="b s" onclick="CKB=[];localStorage.removeItem(\'ckBanks\');ckbStatus();if(CK){CK=Core.planCoinKeeper(CK.items.map(i=>i.row),{accounts:S.accounts,cats:S.cats,ops:S.ops,skipped:ckSkipped()});CK.items.forEach(i=>{i.accept=i.action===\'add\'||i.action===\'link\'});renderCK();}">Сбросить</button>':'<span class="neg">⚠️ Выписки не загружены — подсказок банка не будет. Сначала нажмите кнопку выше.</span>';}
 async function ckBanks(files){CKB=[];for(const f of files){const r=Core.parseTBank(Core.decode(await f.arrayBuffer()));if(r.ops.length)CKB.push({name:f.name,ops:r.ops});}

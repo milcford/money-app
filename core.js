@@ -271,6 +271,14 @@ function opCmp(a,b){const x=opDT(b).localeCompare(opDT(a));return x||(opCreated(
 // screenshot rows come newest-first: give them descending pseudo-times within a day so on-screen order survives sorting
 function shotTimes(rows){const n={};return rows.map(r=>{const d=r.date.slice(0,10);const i=n[d]=(n[d]||0)+1;const s=86400-i;const p=x=>String(x).padStart(2,'0');
   return {...r,date:`${d}T${p(Math.floor(s/3600))}:${p(Math.floor(s%3600/60))}:${p(s%60)}`};});}
+// move op one step up/down among ops of its day (list = visible ops). Returns changed ops (new objects) or [].
+function moveOp(list,id,dir){const day=(list.find(o=>o.id===id)||{}).date;if(!day)return [];const d=String(day).slice(0,10);
+  const ops=list.filter(o=>String(o.date).slice(0,10)===d).sort(opCmp);const i=ops.findIndex(o=>o.id===id),j=i+(dir<0?-1:1);if(i<0||j<0||j>=ops.length)return [];
+  const a=ops[i],b=ops[j],ta=opDT(a),tb=opDT(b);
+  if(ta!==tb)return [{...a,date:tb},{...b,date:ta}];
+  const t=new Date(tb.slice(0,19)+'Z').getTime()+(dir<0?1000:-1000);const n=new Date(t).toISOString().slice(0,19);
+  if(n.slice(0,10)!==d)return [{...a,date:ta},{...b,date:new Date(t+(dir<0?-2000:2000)).toISOString().slice(0,19)}];
+  return [{...a,date:n}];}
 function parseYandexText(lines){const D=/(\d{2})\.(\d{2})\.(\d{4})/,AM=/([+\-−–]?)\s?(\d{1,3}(?:[ \u00a0\u202f]\d{3})*[.,]\d{2})\s*(?:₽|RUB|руб)/g;
   const END=/^(исходящий\s+остаток|всего\s+(расход|приход)|с уважением)/i;
   const JUNK=/^(продолжение на следующей|страница \d|описание операции|операции обработки|мск( мск)?$|исх\. №|выписка по|дата \d|ао «яндекс банк»|.*лицензия банка россии|.*паспорт рф|.*дата рождения|.*сообщает, что между|.*\(далее —)/i;
@@ -296,6 +304,6 @@ function parseYandexText(lines){const D=/(\d{2})\.(\d{2})\.(\d{4})/,AM=/([+\-−
     const t=l.match(/^в (\d{2}):(\d{2})$/);if(t){cur.date=cur.date.slice(0,11)+t[1]+':'+t[2]+':00';continue;}
     cur.desc+=' '+l;}
   flush();return {ops,skipped:0,errors:ops.length?[]:['Не удалось найти операции в выписке Яндекс Банка'],closing,totIn,totOut};}
-root.Core={opCmp,shotTimes,cleanYandexDesc,parseYandexText,ownToTransfer,OWN,suggestCoinKeeper,guessBankAccount,bankKind,parseCoinKeeper,planCoinKeeper,decideOp,parseScreenshotText,screenshotIds,similar,decode,parseTBank,reconcile,balances,hash,isCash};
+root.Core={moveOp,opCmp,shotTimes,cleanYandexDesc,parseYandexText,ownToTransfer,OWN,suggestCoinKeeper,guessBankAccount,bankKind,parseCoinKeeper,planCoinKeeper,decideOp,parseScreenshotText,screenshotIds,similar,decode,parseTBank,reconcile,balances,hash,isCash};
 if(typeof module!=='undefined')module.exports=root.Core;
 })(typeof self!=='undefined'?self:globalThis);
