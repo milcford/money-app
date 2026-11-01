@@ -135,8 +135,9 @@ function planCoinKeeper(rows,state){
     return {row:r,action,op};});
   // the classic double count: manual cash->card transfer + bank deposit booked as income on the same card, same amount, same day
   const tr=items.filter(i=>i.op&&i.op.type==='transfer'&&i.action==='add');const usedT=new Set();
-  for(const it of items){if(it.action!=='add'||it.op.type!=='income')continue;
-    const t=tr.find(x=>!usedT.has(x)&&x.op.toAccountId===it.op.accountId&&x.op.amount===it.op.amount&&days(x.op.date,it.op.date)<=1);
+  const kindOf=id=>(accounts.find(a=>a.id===id)||{}).kind;
+  for(const it of items){if(it.action!=='add'||it.op.type!=='income'||kindOf(it.op.accountId)!=='card')continue; // income into cash/savings is real income, never a double count
+    const t=tr.find(x=>!usedT.has(x)&&x.op.toAccountId===it.op.accountId&&kindOf(x.op.accountId)==='cash'&&x.op.amount===it.op.amount&&days(x.op.date,it.op.date)<=1);
     if(t){usedT.add(t);it.action='pairdup';it.pair=t.row;}}
   // untyped: suggest pairing with a transfer in the file
   for(const it of items){if(it.action!=='decide')continue;
