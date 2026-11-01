@@ -150,10 +150,7 @@ import(){V.innerHTML=`<div class="hdr"><h2>Импорт <span class="mut" style=
   <div class="card"><b>2. Скриншоты списка операций</b><p class="mut">Скриншоты экрана «Операции» Т‑Банка, можно несколько. Распознавание идёт на телефоне.</p>
   <label class="mut">На какой счёт</label><select id="ss_acc">${bankAccs().map(a=>`<option value="${a.id}">${esc(a.name)}</option>`).join('')}</select>
   <label class="b">Выбрать скриншоты<input type="file" accept="image/*" multiple hidden onchange="doShots(this.files)"></label><div id="ss_prog" class="mut"></div></div>
-  <div class="card"><b>3. Перенос из CoinKeeper (CSV)</b><p class="mut">Экспорт CoinKeeper: Настройки → Экспорт данных → CSV. Кошельки, источники и категории сопоставляются по названию, недостающие создаются. Повторный импорт безопасен.</p>
-  <p class="mut">Шаг А: нажмите «Выписки Т‑Банка для подсказок» и выберите <b>оба</b> файла сразу (Аня и Мама). Шаг Б: выберите CSV CoinKeeper. Решения подставятся по банку.</p><label class="b s">А. Выписки Т‑Банка для подсказок<input type="file" accept=".csv,text/csv" multiple hidden onchange="ckBanks(this.files)"></label> <span class="mut" id="ckb"></span>
-  <label class="b">Б. Выбрать CSV CoinKeeper<input type="file" accept=".csv,text/csv" hidden onchange="doCK(this.files[0])"></label></div>
-  <div id="ssedit"></div><div id="review"></div>`;setTimeout(()=>{ckbStatus();if(CK)renderCK();});}
+  <div id="ssedit"></div><div id="review"></div>`;}
 };
 function opIcon(o){if(o.type==='transfer'){const a=S.accounts.find(x=>x.id===o.toAccountId)||{};return [a.icon||'⇄',a.color||'#555'];}
   const c=S.cats.find(x=>x.name===o.category&&x.income===(o.type==='income'))||{};return [c.icon||'•',o.type==='income'?COLORS.inc:COLORS.exp];}
@@ -380,7 +377,7 @@ function ssToReview(){const rows=ssRows.filter(r=>r.amount&&r.date).map(r=>({...
 // ---- CoinKeeper import ----
 let CK=null;
 const ckSkipped=()=>JSON.parse(localStorage.ckSkipped||'[]');
-const APP_VER='v29';
+const APP_VER='v30';
 let CKB=[];try{CKB=JSON.parse(localStorage.ckBanks||'[]');}catch(e){CKB=[];}
 function ckbStatus(){const el=$('#ckb');if(!el)return;el.innerHTML=CKB.length?'✅ Выписки загружены: '+CKB.map(b=>esc((b.accountId?accName(b.accountId):b.name)+' ('+b.ops.length+' операций)')).join(', ')+' <button class="b s" onclick="CKB=[];localStorage.removeItem(\'ckBanks\');ckbStatus();if(CK){CK=Core.planCoinKeeper(CK.items.map(i=>i.row),{accounts:S.accounts,cats:S.cats,ops:S.ops,skipped:ckSkipped()});CK.items.forEach(i=>{i.accept=i.action===\'add\'||i.action===\'link\'});renderCK();}">Сбросить</button>':'<span class="neg">⚠️ Выписки не загружены — подсказок банка не будет. Сначала нажмите кнопку выше.</span>';}
 async function ckBanks(files){CKB=[];for(const f of files){const r=Core.parseTBank(Core.decode(await f.arrayBuffer()));if(r.ops.length)CKB.push({name:f.name,ops:r.ops});}
