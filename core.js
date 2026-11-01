@@ -210,11 +210,12 @@ function reconcile(imported, existing, cardAcc, cashAcc, ownAcc, pairAcc, others
     const abs=Math.abs(op.amount), dir=op.amount<0?'out':'in';
     const isSS=String(op.bankId).startsWith('s:');
     // cross-source overlap: screenshot row vs CSV-imported op (or the reverse): same account, amount, date ±1 day, similar description
-    const ov=existing.find(o=>!used.has(o.id)&&(o.bankIds||[]).length&&(o.bankIds||[]).every(b=>String(b).startsWith('s:')!==isSS)&&
+    const ov=existing.find(o=>!used.has(o.id)&&(o.bankIds||[]).some(b=>!String(b).startsWith('ck:'))&&(o.bankIds||[]).every(b=>String(b).startsWith('s:')!==isSS)&&
       Math.abs(o.amount-abs)<0.005&&days(o.date.slice(0,10),op.date.slice(0,10))<=1&&
       (o.accountId===cardAcc||o.toAccountId===cardAcc)&&(similar(o.note,op.desc)||o.type==='transfer'&&isCash(op)));
     if(ov){used.add(ov.id);out.push({op,action:'link',target:ov.id,overlap:true});continue;}
-    const cand=existing.filter(o=>!used.has(o.id)&&!(o.bankIds||[]).length&&Math.abs(o.amount-abs)<0.005&&days(o.date,op.date)<=2&&(
+    const manual=o=>!(o.bankIds||[]).some(b=>!String(b).startsWith('ck:')); // no ids or only CoinKeeper ids = typed by hand
+    const cand=existing.filter(o=>!used.has(o.id)&&manual(o)&&Math.abs(o.amount-abs)<0.005&&days(o.date,op.date)<=2&&(
       (dir==='out'&&((o.type==='expense'&&o.accountId===cardAcc)||(o.type==='transfer'&&o.accountId===cardAcc)))||
       (dir==='in'&&((o.type==='income'&&o.accountId===cardAcc)||(o.type==='transfer'&&o.toAccountId===cardAcc)))))
       .sort((a,b)=>days(a.date,op.date)-days(b.date,op.date));

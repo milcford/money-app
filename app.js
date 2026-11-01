@@ -251,8 +251,8 @@ function detail(k,id){const it=itemOf(k,id),f=opMatch(k,id);const all=S.ops.filt
   ${k==='acc'?(()=>{const bal=Core.balances(S.accounts,S.ops)[id];return `<div class="row"><span>Остаток сейчас</span><b>${fmt(bal)}</b></div>${it.credit?`<div class="row"><span>Кредитка</span><span>${esc(credInfo(it,bal))}${it.limit?' · лимит '+fmt(it.limit):''}</span></div>`:''}`;})():''}
   <button class="b s" onclick="window._hf={k:'${k}',id:'${id}',m:PER};show('history')">Открыть в Истории</button>
   <button class="b s" onclick="editCirc('${k}','${id}')">✎ ${k==='acc'?'Изменить счёт / указать остаток':'Изменить'}</button></div>
-  <div class="card"><b>По месяцам</b>${Object.entries(bm).sort((a,b)=>b[0].localeCompare(a[0])).map(([m,v])=>`<div class="row" onclick="setPer('${m}')" style="cursor:pointer"><span>${perLabel(m)}</span><b>${fmt(v)}</b></div>`).join('')||'<div class="mut">Нет операций</div>'}</div>
-  <div class="card"><b>Операции (${ops.length})</b></div>${dayGroups(ops.slice(0,300))}${ops.length>300?`<div class="mut">…ещё ${ops.length-300}, см. Историю</div>`:''}`;}
+  <div class="card"><b>Операции (${ops.length})</b></div>${dayGroups(ops.slice(0,300))}${ops.length>300?`<div class="mut">…ещё ${ops.length-300}, см. Историю</div>`:''}
+  <div class="card"><b>По месяцам</b>${Object.entries(bm).sort((a,b)=>b[0].localeCompare(a[0])).map(([m,v])=>`<div class="row" onclick="setPer('${m}')" style="cursor:pointer"><span>${perLabel(m)}</span><b>${fmt(v)}</b></div>`).join('')||'<div class="mut">Нет операций</div>'}</div>`;}
 // ---- drag & drop between circles ----
 let D=null;
 function circAt(x,y){const el=document.elementFromPoint(x,y);return el&&el.closest('.c:not(.add)');}
@@ -351,7 +351,7 @@ function ssToReview(){const rows=ssRows.filter(r=>r.amount&&r.date).map(r=>({...
 // ---- CoinKeeper import ----
 let CK=null;
 const ckSkipped=()=>JSON.parse(localStorage.ckSkipped||'[]');
-const APP_VER='v20';
+const APP_VER='v21';
 let CKB=[];try{CKB=JSON.parse(localStorage.ckBanks||'[]');}catch(e){CKB=[];}
 function ckbStatus(){const el=$('#ckb');if(!el)return;el.innerHTML=CKB.length?'✅ Выписки загружены: '+CKB.map(b=>esc((b.accountId?accName(b.accountId):b.name)+' ('+b.ops.length+' операций)')).join(', ')+' <button class="b s" onclick="CKB=[];localStorage.removeItem(\'ckBanks\');ckbStatus();if(CK){CK=Core.planCoinKeeper(CK.items.map(i=>i.row),{accounts:S.accounts,cats:S.cats,ops:S.ops,skipped:ckSkipped()});CK.items.forEach(i=>{i.accept=i.action===\'add\'||i.action===\'link\'});renderCK();}">Сбросить</button>':'<span class="neg">⚠️ Выписки не загружены — подсказок банка не будет. Сначала нажмите кнопку выше.</span>';}
 async function ckBanks(files){CKB=[];for(const f of files){const r=Core.parseTBank(Core.decode(await f.arrayBuffer()));if(r.ops.length)CKB.push({name:f.name,ops:r.ops});}
