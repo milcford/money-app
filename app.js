@@ -254,6 +254,8 @@ function detail(k,id){const it=itemOf(k,id),f=opMatch(k,id);const all=S.ops.filt
   <div class="card"><div class="row"><span>${esc(perLabel(PER))}${k==='acc'?' (приход − расход)':''}</span><b class="${k==='exp'?'neg':'pos'}">${fmt(tot)}</b></div>
   <button class="b" onclick="${add.replace(/"/g,'&quot;')}">+ Добавить</button>
   ${k==='acc'?(()=>{const bal=Core.balances(S.accounts,S.ops)[id];return `<div class="row"><span>Остаток сейчас</span><b>${fmt(bal)}</b></div>${it.credit?`<div class="row"><span>Кредитка</span><span>${esc(credInfo(it,bal))}${it.limit?' · лимит '+fmt(it.limit):''}</span></div>`:''}`;})():''}
+  ${k==='acc'&&bankOf(it)?`<label class="b s">📄 Загрузить выписку${bankOf(it)==='yandex'?' (PDF)':' (CSV)'}<input type="file" accept="${bankOf(it)==='yandex'?'.pdf,application/pdf':'.csv,text/csv'}" hidden onchange="accImport('${id}',this.files[0])"></label>
+  <label class="b s">📷 Загрузить скриншоты<input type="file" accept="image/*" multiple hidden onchange="accShots('${id}',this.files)"></label>`:''}
   <button class="b s" onclick="window._hf={k:'${k}',id:'${id}',m:PER};show('history')">Открыть в Истории</button>
   <button class="b s" onclick="editCirc('${k}','${id}')">✎ ${k==='acc'?'Изменить счёт / указать остаток':'Изменить'}</button></div>
   <div class="card"><b>Операции (${ops.length})</b></div>${dayGroups(ops.slice(0,300))}${ops.length>300?`<div class="mut">…ещё ${ops.length-300}, см. Историю</div>`:''}
@@ -282,7 +284,7 @@ function tapCirc(c){const k=c.dataset.k,id=c.dataset.id;
   show('detail',{k,id});}
 V.addEventListener('contextmenu',e=>{if(e.target.closest('.c'))e.preventDefault();});
 // ---- import & review ----
-function cardAccFor(card,bank){const d=String(card).replace(/\D/g,'').slice(-4);const cards=bankAccs().filter(a=>!bank||bankOf(a)===bank||a.id===($('#csv_acc')||{}).value);
+function cardAccFor(card,bank){if(FIX)return FIX;const d=String(card).replace(/\D/g,'').slice(-4);const cards=bankAccs().filter(a=>!bank||bankOf(a)===bank||a.id===($('#csv_acc')||{}).value);
   return (d&&cards.find(a=>a.cardMask&&String(a.cardMask).replace(/\D/g,'').slice(-4)===d)||cards.find(a=>a.id===($('#csv_acc')||{}).value)||cards[0]).id;}
 function guessCat(op){if(op.amount>0){const inc=S.cats.filter(c=>c.income);return (inc.find(c=>c.name==='Прочее')||inc[inc.length-1]||{name:'Прочее'}).name;}
   const ex=S.cats.filter(c=>!c.income),t=(op.bankCategory+' '+op.desc).toLowerCase();const m=ex.find(c=>t.includes(c.name.toLowerCase()));if(m)return m.name;
@@ -296,6 +298,11 @@ async function pdfLines(file){toast('Читаю PDF…');const pdfjs=await impor
     for(const it of tc.items){if(!it.str.trim())continue;const y=Math.round(it.transform[5]/3);(rows[y]=rows[y]||[]).push(it);}
     Object.keys(rows).map(Number).sort((a,b)=>b-a).forEach(y=>out.push(rows[y].sort((a,b)=>a.transform[4]-b.transform[4]).map(i=>i.str).join(' ')));}
   return out;}
+let FIX=null;
+function fixTo(id){show('import');FIX=id;const t=$('#review');if(t)t.scrollIntoView();for(const s of ['#csv_acc','#ss_acc'])if($(s))$(s).value=id;}
+function accImport(id,f){if(!f)return;fixTo(id);doImport(f);}
+function accShots(id,fs){if(!fs||!fs.length)return;fixTo(id);doShots(fs);}
+function afterImport(){if(FIX){const id=FIX;FIX=null;show('detail',{k:'acc',id});}else show('history');}
 async function doImport(file){const sel=S.accounts.find(a=>a.id===($('#csv_acc')||{}).value)||{};const isPdf=/\.pdf$/i.test(file.name)||file.type==='application/pdf';
   let r;try{if(isPdf||bankOf(sel)==='yandex'){if(!isPdf)return alert('Для Яндекс Банка нужен PDF «Выписка по договору».');r=Core.parseYandexText(await pdfLines(file));r.bank='yandex';}
   else{r=Core.parseTBank(Core.decode(await file.arrayBuffer()));r.bank='tbank';}}catch(e){return alert('Не удалось прочитать файл: '+e.message);}
@@ -327,7 +334,7 @@ async function applyImport(){let n=0;const bals={};(IMP.accs||[]).forEach(id=>{c
   else continue;await put('ops',o);n++;}
   S.ops=await all('ops');
   for(const id in bals){const acc=S.accounts.find(a=>a.id===id);if(!acc)continue;const b=Core.balances(S.accounts,S.ops)[id];acc.initial=Math.round(((+acc.initial||0)+bals[id]-b)*100)/100;await put('accounts',acc);}
-  S.accounts=await all('accounts');S.accounts.sort(byOrder);toast('Импортировано: '+n);show('history');}
+  S.accounts=await all('accounts');S.accounts.sort(byOrder);toast('Импортировано: '+n);afterImport();}
 // ---- screenshot import (client-side OCR) ----
 let ssRows=[],ssAcc='tbank';
 function loadTesseract(){return window.Tesseract?Promise.resolve():new Promise((ok,no)=>{const sc=document.createElement('script');sc.src='https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';sc.onload=ok;sc.onerror=()=>no(new Error('Не удалось загрузить модуль распознавания (нужен интернет при первом запуске)'));document.head.appendChild(sc);});}
@@ -357,7 +364,7 @@ function ssToReview(){const rows=ssRows.filter(r=>r.amount&&r.date).map(r=>({...
 // ---- CoinKeeper import ----
 let CK=null;
 const ckSkipped=()=>JSON.parse(localStorage.ckSkipped||'[]');
-const APP_VER='v23';
+const APP_VER='v24';
 let CKB=[];try{CKB=JSON.parse(localStorage.ckBanks||'[]');}catch(e){CKB=[];}
 function ckbStatus(){const el=$('#ckb');if(!el)return;el.innerHTML=CKB.length?'✅ Выписки загружены: '+CKB.map(b=>esc((b.accountId?accName(b.accountId):b.name)+' ('+b.ops.length+' операций)')).join(', ')+' <button class="b s" onclick="CKB=[];localStorage.removeItem(\'ckBanks\');ckbStatus();if(CK){CK=Core.planCoinKeeper(CK.items.map(i=>i.row),{accounts:S.accounts,cats:S.cats,ops:S.ops,skipped:ckSkipped()});CK.items.forEach(i=>{i.accept=i.action===\'add\'||i.action===\'link\'});renderCK();}">Сбросить</button>':'<span class="neg">⚠️ Выписки не загружены — подсказок банка не будет. Сначала нажмите кнопку выше.</span>';}
 async function ckBanks(files){CKB=[];for(const f of files){const r=Core.parseTBank(Core.decode(await f.arrayBuffer()));if(r.ops.length)CKB.push({name:f.name,ops:r.ops});}
@@ -421,7 +428,7 @@ async function importJSON(f){const d=JSON.parse(await f.text());if(!confirm('З�
   for(const s of ['accounts','ops','cats']){for(const x of S[s])await del(s,x.id);for(const x of d[s]||[])await put(s,x);}await load();show('home');}
 // ---- nav ----// ---- nav ----
 let cur='home';
-function show(v,arg){cur=v;if(arg!==undefined)window._arg=arg;document.querySelectorAll('#bar nav button').forEach(b=>b.classList.toggle('on',b.dataset.v===v||(v==='import'&&b.dataset.v==='history')));header();views[v](arg);window.scrollTo(0,0);}
+function show(v,arg){if(v!=='import')FIX=null;cur=v;if(arg!==undefined)window._arg=arg;document.querySelectorAll('#bar nav button').forEach(b=>b.classList.toggle('on',b.dataset.v===v||(v==='import'&&b.dataset.v==='history')));header();views[v](arg);window.scrollTo(0,0);}
 document.querySelectorAll('#bar nav button').forEach(b=>b.onclick=()=>show(b.dataset.v));
 $('#plus').onclick=()=>opSheet({type:'expense'});
 openDB().then(d=>{db=d;return load();}).then(()=>{show('home');runSync();});
