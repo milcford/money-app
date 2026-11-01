@@ -135,7 +135,7 @@ stats(){const m=window._month||month(),s=monthSums(m);const rows=Object.entries(
   V.innerHTML=`<div class="hdr"><h2>Обзор</h2></div><div class="card"><input type="month" value="${m}" onchange="window._month=this.value;views.stats()">
   <div class="row"><span>Доходы</span><b class="pos">${fmt(s.inc)}</b></div><div class="row"><span>Расходы</span><b class="neg">${fmt(s.exp)}</b></div><div class="row"><span>Итог</span><b>${fmt(s.inc-s.exp)}</b></div></div>
   <div class="card">${rows.map(([k,v])=>`<div class="row"><span>${esc(ic(k))} ${esc(k)}</span><span>${fmt(v)} <span class="mut">${Math.round(v/s.exp*100)}%</span></span></div><div style="height:4px;background:#6fe3df;width:${v/s.exp*100}%;border-radius:2px"></div>`).join('')||'<div class="mut">Нет расходов</div>'}</div>`;},
-history(){const hf=window._hf||{};const f=hf.k?opMatch(hf.k,hf.id):()=>true;const list=[...S.ops].filter(o=>f(o)&&(!hf.m||o.date.startsWith(hf.m))).sort((a,b)=>b.date.localeCompare(a.date));const n=list.filter(o=>o.reviewed===false).length;const g={};list.forEach(o=>(g[o.date.slice(0,10)]=g[o.date.slice(0,10)]||[]).push(o));
+history(){const hf=window._hf||{};const f=hf.k?opMatch(hf.k,hf.id):()=>true;const list=[...S.ops].filter(o=>f(o)&&(!hf.m||o.date.startsWith(hf.m))).sort(Core.opCmp);const n=list.filter(o=>o.reviewed===false).length;const g={};list.forEach(o=>(g[o.date.slice(0,10)]=g[o.date.slice(0,10)]||[]).push(o));
   V.innerHTML=`<div class="hdr"><h2>История</h2><div><button onclick="show('import')">⤓ Импорт</button> <button onclick="menu()">⋯</button></div></div>${histFilter()}
   ${n?`<div class="card" style="display:flex;justify-content:space-between;align-items:center"><span>Новых из банка: <b>${n}</b></span><button class="b s" style="width:auto;margin:0;font-size:14px" onclick="markAll()">Всё верно</button></div>`:''}
   ${Object.entries(g).map(([d,ops])=>{const sum=ops.reduce((x,o)=>x+(o.type==='expense'?-o.amount:o.type==='income'?o.amount:0),0);
@@ -235,7 +235,7 @@ async function moveCirc(d){const{k,it}=_ce;const list=k==='acc'?S.accounts:S.cat
 async function delCirc(){const{k,it}=_ce;const used=k==='acc'?S.ops.some(o=>o.accountId===it.id||o.toAccountId===it.id):false;
   if(used)return toast('По кошельку есть операции — сначала удалите их');if(!confirm('Удалить «'+it.name+'»?'))return;
   await del(k==='acc'?'accounts':'cats',it.id);closeSheet();refresh();}
-function dayGroups(list){const g={};list.forEach(o=>(g[o.date.slice(0,10)]=g[o.date.slice(0,10)]||[]).push(o));
+function dayGroups(list){const g={};[...list].sort(Core.opCmp).forEach(o=>(g[o.date.slice(0,10)]=g[o.date.slice(0,10)]||[]).push(o));
   return Object.entries(g).map(([d,ops])=>{const sum=ops.reduce((x,o)=>x+(o.type==='expense'?-o.amount:o.type==='income'?o.amount:0),0);
    return `<div class="dayh"><span>${new Date(d).toLocaleDateString('ru-RU',{day:'numeric',month:'long',year:d.slice(0,4)===today().slice(0,4)?undefined:'numeric',weekday:'short'})}</span><span>${fmt(sum)}</span></div>${ops.map(hrow).join('')}`;}).join('');}
 function histFilter(){const hf=window._hf||{};const cur=hf.k?hf.k+':'+hf.id:'';
@@ -247,7 +247,7 @@ function histFilter(){const hf=window._hf||{};const cur=hf.k?hf.k+':'+hf.id:'';
    <optgroup label="Расходы">${S.cats.filter(c=>!c.income).map(c=>opt('exp:'+c.id,c.name)).join('')}</optgroup></select>
    <select style="flex:1" onchange="window._hf={...(window._hf||{}),m:this.value};views.history()"><option value="">Все месяцы</option>${months.map(m=>`<option value="${m}" ${m===hf.m?'selected':''}>${perLabel(m)}</option>`).join('')}</select></div>`;}
 // detail of one circle: its operations, period total, per-month totals
-function detail(k,id){const it=itemOf(k,id),f=opMatch(k,id);const all=S.ops.filter(f);const ops=all.filter(o=>o.date.startsWith(PER)).sort((a,b)=>b.date.localeCompare(a.date));
+function detail(k,id){const it=itemOf(k,id),f=opMatch(k,id);const all=S.ops.filter(f);const ops=all.filter(o=>o.date.startsWith(PER)).sort(Core.opCmp);
   const tot=ops.reduce((s,o)=>s+opVal(k,id,o),0);const bm={};all.forEach(o=>{const m=o.date.slice(0,7);bm[m]=(bm[m]||0)+opVal(k,id,o);});
   const add=k==='inc'?`opSheet({type:'income',category:'${esc(it.name)}'})`:k==='acc'?`opSheet({type:'expense',accountId:'${id}'})`:`opSheet({type:'expense',category:'${esc(it.name)}'})`;
   V.innerHTML=`<div class="hdr"><h2>${esc(it.icon||'')} ${esc(it.name)}</h2><button onclick="show('home')">‹ Назад</button></div>
@@ -369,13 +369,13 @@ function renderSS(){$('#ssedit').innerHTML=`<div class="card"><b>Распозн�
   <button class="b s" onclick="ssRows.push({date:today(),amount:0,desc:'',cat:'',shot:-1});renderSS()">+ Строка</button>
   <button class="b" onclick="ssToReview()">Далее: проверка дублей</button></div>`;}
 function ssToReview(){const rows=ssRows.filter(r=>r.amount&&r.date).map(r=>({...r,date:r.date+'T00:00:00',amount:+r.amount}));
-  const ops=Core.screenshotIds(rows).map(r=>({bankId:r.bankId,date:r.date,amount:r.amount,desc:r.desc,bankCategory:r.cat||'',card:'',mcc:''}));
+  const ops=Core.shotTimes(Core.screenshotIds(rows)).map(r=>({bankId:r.bankId,date:r.date,amount:r.amount,desc:r.desc,bankCategory:r.cat||'',card:'',mcc:''}));
   IMP={accs:[ssAcc]};pending=Core.reconcile(ops,S.ops,ssAcc,'cash',(blackFor(ssAcc)||{}).id,pairOf(ssAcc)).map(p=>({...p,card:ssAcc,accept:p.action!=='duplicate'}));
   $('#ssedit').innerHTML='';renderReview(0);$("#review").scrollIntoView();}
 // ---- CoinKeeper import ----
 let CK=null;
 const ckSkipped=()=>JSON.parse(localStorage.ckSkipped||'[]');
-const APP_VER='v27';
+const APP_VER='v28';
 let CKB=[];try{CKB=JSON.parse(localStorage.ckBanks||'[]');}catch(e){CKB=[];}
 function ckbStatus(){const el=$('#ckb');if(!el)return;el.innerHTML=CKB.length?'✅ Выписки загружены: '+CKB.map(b=>esc((b.accountId?accName(b.accountId):b.name)+' ('+b.ops.length+' операций)')).join(', ')+' <button class="b s" onclick="CKB=[];localStorage.removeItem(\'ckBanks\');ckbStatus();if(CK){CK=Core.planCoinKeeper(CK.items.map(i=>i.row),{accounts:S.accounts,cats:S.cats,ops:S.ops,skipped:ckSkipped()});CK.items.forEach(i=>{i.accept=i.action===\'add\'||i.action===\'link\'});renderCK();}">Сбросить</button>':'<span class="neg">⚠️ Выписки не загружены — подсказок банка не будет. Сначала нажмите кнопку выше.</span>';}
 async function ckBanks(files){CKB=[];for(const f of files){const r=Core.parseTBank(Core.decode(await f.arrayBuffer()));if(r.ops.length)CKB.push({name:f.name,ops:r.ops});}
