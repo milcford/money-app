@@ -202,7 +202,7 @@ const days=(a,b)=>Math.abs(new Date(a)-new Date(b))/864e5;
 // Classify imported ops against existing operations.
 // existing: [{id,type,amount(positive),accountId,toAccountId,date,bankIds:[]}], cardAccountId, cashAccountId
 const OWN=/между своими счетами/i;
-function reconcile(imported, existing, cardAcc, cashAcc, ownAcc, pairAcc){
+function reconcile(imported, existing, cardAcc, cashAcc, ownAcc, pairAcc, others){
   const known=new Set(); existing.forEach(o=>(o.bankIds||[]).forEach(b=>known.add(b)));
   const used=new Set(); const out=[];
   for(const op of imported){
@@ -230,6 +230,10 @@ function reconcile(imported, existing, cardAcc, cashAcc, ownAcc, pairAcc){
         if(cs.length){used.add(cs[0].id);out.push({op,action:'convert',target:cs[0].id,from:dir==='out'?cardAcc:pairAcc,to:dir==='out'?pairAcc:cardAcc});continue;}
         out.push({op,action:'transfer',from:dir==='out'?cardAcc:pairAcc,to:dir==='out'?pairAcc:cardAcc});continue;}
       if(ownAcc&&ownAcc!==cardAcc){out.push({op,action:'transfer',from:dir==='in'?ownAcc:cardAcc,to:dir==='in'?cardAcc:ownAcc});continue;}}
+    // transfer from/to own card at another bank (e.g. Yandex <- T-Bank Card2Card): turn that card's expense/income into a transfer
+    if(others&&others.length&&/(t-?bank|т-?банк|тинькофф|card2card|себе (в|из) друг)/i.test(op.desc||'')){const want=dir==='in'?'expense':'income';
+      const cs=existing.filter(o=>!used.has(o.id)&&o.type===want&&others.includes(o.accountId)&&o.accountId!==cardAcc&&Math.abs(o.amount-abs)<0.005&&days(o.date.slice(0,10),op.date.slice(0,10))<=1);
+      if(cs.length===1){used.add(cs[0].id);out.push({op,action:'convert',target:cs[0].id,from:dir==='in'?cs[0].accountId:cardAcc,to:dir==='in'?cardAcc:cs[0].accountId});continue;}}
     const c=isCash(op);
     if(c==='in') out.push({op,action:'transfer',from:cashAcc,to:cardAcc});
     else if(c==='out') out.push({op,action:'transfer',from:cardAcc,to:cashAcc});
@@ -246,24 +250,31 @@ function balances(accounts,ops){const b={};accounts.forEach(a=>b[a.id]=+a.initia
   return b;}
 // ---- Yandex Bank «Выписка по договору» (PDF) — best effort (beta) ----
 // lines: text lines of the PDF in reading order. Returns {ops,skipped,errors,closing}
-function parseYandexText(lines){const D=/(\d{2})\.(\d{2})\.(\d{4})/,AM=/([+\-−–]?)\s?(\d{1,3}(?:[ \u00a0\u202f]\d{3})*(?:[.,]\d{2}))\s*(?:₽|RUB|руб)?/g;
-  const SKIP=/^(выписка|клиент|договор|период|номер сч|сч[её]т №|фио|адрес|дата формирования)|(входящий|исходящий)\s+остаток|итого|всего\s+(расход|приход)|баланс на|страниц|^описание|дата\s+(операции|обработки)|сумма в валюте/i;
-  const ops=[],seen={};let cur=null,closing=null,desc=[];
+function parseYandexText(lines){const D=/(\d{2})\.(\d{2})\.(\d{4})/,AM=/([+\-−–]?)\s?(\d{1,3}(?:[ \u00a0\u202f]\d{3})*[.,]\d{2})\s*(?:₽|RUB|руб)/g;
+  const END=/^(исходящий\s+остаток|всего\s+(расход|приход)|с уважением)/i;
+  const JUNK=/^(продолжение на следующей|страница \d|описание операции|операции обработки|мск( мск)?$|исх\. №|выписка по|дата \d|ао «яндекс банк»)/i;
+  const ops=[],seen={};let cur=null,closing=null,totIn=null,totOut=null,started=false,ended=false;
+  const val=m=>{const v=num(m[2]);return m[1]==='+'?v:m[1]?-v:null;};
   const flush=()=>{if(!cur)return;cur.desc=cur.desc.replace(/\s+/g,' ').trim();
-    if(cur.sign==='')cur.amount=/(пополн|зачисл|перевод от|входящ|возврат|кешб[эе]к|проценты|начислен)/i.test(cur.desc)?Math.abs(cur.amount):-Math.abs(cur.amount);
+    if(cur.amount==null)cur.amount=/(пополн|зачисл|входящ|возврат|кешб[эе]к|проценты|начислен)/i.test(cur.desc)?Math.abs(cur.abs):-Math.abs(cur.abs);
     const base=['y',cur.date,cur.amount.toFixed(2),norm(cur.desc)].join('|');seen[base]=(seen[base]||0)+1;
     ops.push({bankId:hash(base+'#'+seen[base]),date:cur.date,amount:cur.amount,currency:'RUB',card:cur.card||'',desc:cur.desc,bankCategory:'',mcc:''});cur=null;};
-  for(let raw of lines){const l=String(raw).replace(/\s+/g,' ').trim();if(!l)continue;
-    const cl=l.match(/исходящий\s+остаток[^\d+\-−]*([+\-−]?\s?\d[\d \u00a0]*[.,]\d{2})/i);if(cl){closing=num(cl[1].replace(/[−–]/,'-'));continue;}
-    if(SKIP.test(l))continue;
-    const dm=l.match(D);const am=[...l.matchAll(AM)].filter(m=>!/^\d{2}\.\d{2}$/.test(m[2]));
-    if(dm&&am.length){flush();const m=am[am.length-1];const sign=m[1]==='+'?'+':m[1]?'-':'';
-      const v=num(m[2]);const tm=l.match(/(\d{2}):(\d{2})/);const card=(l.match(/\*{1,4}\s?(\d{4})/)||[])[1];
-      let d=(desc.join(' ')+' '+l.slice(0,dm.index).replace(AM,'')).trim();desc=[];
-      cur={date:`${dm[3]}-${dm[2]}-${dm[1]}T${tm?tm[1]+':'+tm[2]:'00:00'}:00`,amount:sign==='+'?v:sign?-v:v,sign,desc:d,card};continue;}
-    if(cur&&/^в \d{2}:\d{2}$/.test(l)){const t=l.match(/(\d{2}):(\d{2})/);cur.date=cur.date.slice(0,11)+t[1]+':'+t[2]+':00';continue;}
-    desc.push(l.replace(AM,'').trim());}
-  flush();return {ops,skipped:0,errors:ops.length?[]:['Не удалось найти операции в выписке Яндекс Банка'],closing};}
+  for(const raw of lines){const l=String(raw).replace(/\s+/g,' ').trim();if(!l)continue;
+    const am=[...l.replace(/\d{2}\.\d{2}\.\d{4}/g,' ').matchAll(AM)];
+    if(/^исходящий\s+остаток/i.test(l)&&am.length){closing=num(am[am.length-1][2])*(/[−–-]/.test(am[am.length-1][1])?-1:1);flush();ended=true;continue;}
+    if(/^всего\s+расход/i.test(l)&&am.length){totOut=-num(am[0][2]);continue;}
+    if(/^всего\s+приход/i.test(l)&&am.length){totIn=num(am[0][2]);continue;}
+    if(END.test(l)){flush();ended=true;continue;}
+    if(/^входящий\s+остаток/i.test(l)){started=true;continue;}
+    if(ended||JUNK.test(l))continue;
+    const dm=l.match(D);
+    if(dm&&am.length&&dm.index>0||dm&&am.length&&started){flush();started=true;const m=am[am.length-1];
+      const card=(l.match(/\*(\d{4})/)||[])[1];
+      cur={date:`${dm[3]}-${dm[2]}-${dm[1]}T00:00:00`,amount:val(m),abs:num(m[2]),desc:l.slice(0,dm.index),card};continue;}
+    if(!cur)continue;
+    const t=l.match(/^в (\d{2}):(\d{2})$/);if(t){cur.date=cur.date.slice(0,11)+t[1]+':'+t[2]+':00';continue;}
+    cur.desc+=' '+l;}
+  flush();return {ops,skipped:0,errors:ops.length?[]:['Не удалось найти операции в выписке Яндекс Банка'],closing,totIn,totOut};}
 root.Core={parseYandexText,ownToTransfer,OWN,suggestCoinKeeper,guessBankAccount,bankKind,parseCoinKeeper,planCoinKeeper,decideOp,parseScreenshotText,screenshotIds,similar,decode,parseTBank,reconcile,balances,hash,isCash};
 if(typeof module!=='undefined')module.exports=root.Core;
 })(typeof self!=='undefined'?self:globalThis);
