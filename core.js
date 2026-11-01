@@ -89,6 +89,66 @@ function screenshotIds(rows){const cnt={},out=[],seen=new Set();
 function similar(a,b){a=norm(a).replace(/ё/g,"е");b=norm(b).replace(/ё/g,"е");if(!a||!b)return false;if(a.includes(b)||b.includes(a))return true;
   const bg=s=>{const m=new Map();for(let i=0;i<s.length-1;i++){const g=s.slice(i,i+2);m.set(g,(m.get(g)||0)+1);}return m;};
   const A=bg(a),B=bg(b);let inter=0;A.forEach((v,g)=>inter+=Math.min(v,B.get(g)||0));return 2*inter/(a.length+b.length-2)>=0.5;}
+
+// ---------- CoinKeeper CSV export import ----------
+// Header: Date,Type,From,To,Tags,Amount,Currency,Amount converted,Currency of conversion,Recurrence,Note
+function parseCoinKeeper(text){
+  const rows=splitCSV(text);if(!rows.length)return {rows:[],errors:['Пустой файл']};
+  const h=rows[0].map(x=>x.trim().toLowerCase());const ix=n=>h.indexOf(n);
+  const I={date:ix('date'),type:ix('type'),from:ix('from'),to:ix('to'),tags:ix('tags'),amount:ix('amount'),cur:ix('currency'),note:ix('note')};
+  if(I.date<0||I.amount<0||I.from<0||I.to<0)return {rows:[],errors:['Это не похоже на экспорт CoinKeeper (нет колонок Date/From/To/Amount)']};
+  const out=[],seen={};
+  for(const r of rows.slice(1)){const g=k=>I[k]>=0?(r[I[k]]||'').trim():'';
+    const date=parseDate(g('date'));const amount=num(g('amount'));if(!date||amount==null)continue;
+    const row={date:date.slice(0,10),type:g('type').toLowerCase(),from:g('from'),to:g('to'),tags:g('tags').split(',').map(t=>t.trim()).filter(Boolean),amount:Math.abs(amount),currency:g('cur')||'RUB',note:g('note')};
+    const base=['ck',row.date,row.type,norm(row.from),norm(row.to),row.amount.toFixed(2),norm(row.note),norm(row.tags.join())].join('|');
+    seen[base]=(seen[base]||0)+1;row.ckId='ck:'+hash(base+'#'+seen[base]);out.push(row);}
+  return {rows:out,errors:[]};}
+const nameEq=(a,b)=>{a=norm(a).replace(/ё/g,'е');b=norm(b).replace(/ё/g,'е');return a===b||(a.length>=4&&b.length>=4&&(a.startsWith(b)||b.startsWith(a)));};
+// state: {accounts,cats,ops}. Returns plan; nothing is written.
+function planCoinKeeper(rows,state){
+  const accounts=[...state.accounts],cats=[...state.cats],newAccounts=[],newCats=[];
+  const findAcc=n=>accounts.find(a=>a.name.trim()===n)||accounts.find(a=>nameEq(a.name,n));
+  const wallet=n=>{if(!n)return null;let a=findAcc(n);if(!a){const kind=/тинькофф|банк|карт|сбер|альфа|visa|мир/i.test(n)?'card':/отлож|копил|накоп/i.test(n)?'savings':'cash';
+      a={id:'ck_'+hash('acc|'+norm(n)),name:n,kind,icon:kind==='card'?'💳':'👛',color:{card:'#4a3b1c',savings:'#4caf72',cash:'#c9a84c'}[kind],initial:0,cardMask:'',order:100+newAccounts.length};accounts.push(a);newAccounts.push(a);}return a.id;};
+  const cat=(n,income)=>{let c=cats.find(c=>c.income===income&&c.name.trim()===n)||cats.find(c=>c.income===income&&nameEq(c.name,n));
+    if(!c){c={id:'ck_'+hash((income?'inc|':'exp|')+norm(n)),name:n,income,icon:income?'💵':'🛒',color:income?'#2c4a9a':'#0d2626',order:100+newCats.length};cats.push(c);newCats.push(c);}return c.name;};
+  const known=new Set(state.skipped||[]);state.ops.forEach(o=>(o.bankIds||[]).forEach(b=>known.add(b)));
+  const bankOps=state.ops.filter(o=>(o.bankIds||[]).some(b=>!String(b).startsWith('ck:')));const usedLink=new Set();
+  const cashId=()=>(accounts.find(a=>a.kind==='cash')||{}).id;
+  const items=rows.map(r=>{const note=[r.note,...r.tags.map(t=>'#'+t)].filter(Boolean).join(' ');let op=null,action='add';
+    const base={amount:r.amount,date:r.date,note,tags:r.tags,bankIds:[r.ckId]};
+    if(r.type==='expense')op={...base,type:'expense',accountId:wallet(r.from),category:cat(r.to,false)};
+    else if(r.type==='income'){const src=/^correction$/i.test(r.from)?'Корректировка баланса':r.from;op={...base,type:'income',accountId:wallet(r.to),category:cat(src,true)};}
+    else if(r.type==='transfer')op={...base,type:'transfer',accountId:wallet(r.from),toAccountId:wallet(r.to)};
+    else if(r.type==='debt'){const out=!!findAcc(r.from)&&!findAcc(r.to);op=out?{...base,type:'expense',accountId:wallet(r.from),category:cat('Долги',false),note:('Долг: '+r.to+' '+note).trim()}:
+      {...base,type:'income',accountId:wallet(r.to),category:cat('Долги',true),note:('Долг: '+r.from+' '+note).trim()};}
+    else{ // untyped: bank operation never categorized in CoinKeeper
+      action='decide';const inflow=!!r.to;const acc=wallet(inflow?r.to:r.from);
+      op={...base,type:inflow?'income':'expense',accountId:acc,category:'',note:(note||'Без категории в CoinKeeper')};
+      return {row:r,action,op,inflow,choice:'skip'};}
+    if(known.has(r.ckId))return {row:r,action:'duplicate',op};
+    // link with ops already imported from the bank (T-Bank CSV/screenshot)
+    const t=bankOps.find(o=>!usedLink.has(o.id)&&o.type===op.type&&Math.abs(o.amount-op.amount)<0.005&&days(o.date.slice(0,10),op.date)<=1&&
+      (o.accountId===op.accountId||(op.type==='transfer'&&o.toAccountId===op.toAccountId)));
+    if(t){usedLink.add(t.id);return {row:r,action:'link',op,target:t.id};}
+    return {row:r,action,op};});
+  // the classic double count: manual cash->card transfer + bank deposit booked as income on the same card, same amount, same day
+  const tr=items.filter(i=>i.op&&i.op.type==='transfer'&&i.action==='add');const usedT=new Set();
+  for(const it of items){if(it.action!=='add'||it.op.type!=='income')continue;
+    const t=tr.find(x=>!usedT.has(x)&&x.op.toAccountId===it.op.accountId&&x.op.amount===it.op.amount&&days(x.op.date,it.op.date)<=1);
+    if(t){usedT.add(t);it.action='pairdup';it.pair=t.row;}}
+  // untyped: suggest pairing with a transfer in the file
+  for(const it of items){if(it.action!=='decide')continue;
+    const t=tr.find(x=>(it.inflow?x.op.toAccountId:x.op.accountId)===it.op.accountId&&x.op.amount===it.op.amount&&days(x.op.date,it.op.date)<=2);
+    if(t){it.pair=t.row;it.choice='skip';it.hint='есть ручной перевод на ту же сумму';}
+    else if(known.has(it.row.ckId))it.action='duplicate';}
+  return {items,newAccounts,newCats,cashId:cashId()};}
+// turn a decided untyped item into an op (or null for skip)
+function decideOp(it,choice,cashId,category){if(choice==='skip')return null;const o={...it.op};
+  if(choice==='transfer'){o.type='transfer';if(it.inflow){o.toAccountId=o.accountId;o.accountId=cashId;}else o.toAccountId=cashId;o.category='';}
+  else if(choice==='income'){o.type='income';o.category=category||'Прочее';}else {o.type='expense';o.category=category||'Прочее';}
+  return o;}
 const CASH_IN=/(пополнение.*налич|внесение налич|cash ?in|банкомат.*пополн|пополнение.*банкомат)/i;
 const CASH_OUT=/(снятие налич|выдача налич|cash ?out|atm|снятие в банкомате|банкомат)/i;
 function isCash(op){const d=(op.desc+' '+op.bankCategory).toLowerCase(); if(op.mcc==='6011'||/налич|банкомат|atm|cash/.test(d)) return op.amount>0?'in':'out'; return null;}
@@ -123,6 +183,6 @@ function balances(accounts,ops){const b={};accounts.forEach(a=>b[a.id]=+a.initia
   for(const o of ops){ if(o.type==='expense')b[o.accountId]-=o.amount; else if(o.type==='income')b[o.accountId]+=o.amount;
     else if(o.type==='transfer'){b[o.accountId]-=o.amount;b[o.toAccountId]+=o.amount;} }
   return b;}
-root.Core={parseScreenshotText,screenshotIds,similar,decode,parseTBank,reconcile,balances,hash,isCash};
+root.Core={parseCoinKeeper,planCoinKeeper,decideOp,parseScreenshotText,screenshotIds,similar,decode,parseTBank,reconcile,balances,hash,isCash};
 if(typeof module!=='undefined')module.exports=root.Core;
 })(typeof self!=='undefined'?self:globalThis);
