@@ -285,11 +285,12 @@ function jlDate(v){if(v instanceof Date){const z=x=>String(x).padStart(2,'0');re
   const m=String(v||'').match(/(\d{2})\.(\d{2})\.(\d{4})(?:[ T,]+(\d{1,2}):(\d{2})(?::(\d{2}))?)?/);if(m)return `${m[3]}-${m[2]}-${m[1]}T${(m[4]||'0').padStart(2,'0')}:${m[5]||'00'}:${m[6]||'00'}`;
   const i=String(v||'').match(/^(\d{4}-\d{2}-\d{2})(?:[ T](\d{2}:\d{2}(?::\d{2})?))?/);return i?i[1]+'T'+((i[2]||'00:00:00')+':00').slice(0,8):null;}
 function parseJetlend(rows){const hi=rows.findIndex(r=>(r||[]).some(c=>String(c).trim()==='Тип операции'));if(hi<0)return {errors:['Это не похоже на «Экспорт операций» JetLend (нет колонки «Тип операции»)']};
-  const h=rows[hi].map(c=>String(c||'').trim());const ix=n=>h.indexOf(n);const I={d:ix('Дата'),op:ix('Тип операции'),in:ix('Приход'),out:ix('Расход'),rev:ix('Доход после удержания')};
-  if(I.d<0||I.in<0||I.out<0)return {errors:['В файле JetLend нет колонок Дата/Приход/Расход']};
+  const h=rows[hi].map(c=>String(c||'').trim());const ix=n=>h.indexOf(n);const I={d:h.findIndex(c=>/^дата/i.test(c)),op:ix('Тип операции'),in:ix('Приход'),out:ix('Расход'),rev:ix('Доход после удержания')};if(I.rev<0)I.rev=ix('Доход');
+  // two exports exist: "операции" (Приход/Расход/Доход после удержания) and "доходы" (ID/Дата/Эмитент/ИНН/Доход/Тип операции)
+  if(I.d<0||(I.in<0&&I.rev<0))return {errors:['Не нашёл в файле JetLend колонки «Дата» и «Приход/Расход» или «Доход»']};
   const n=v=>typeof v==='number'?v:(num(String(v||''))||0);const deposits=[],monthly={},seen={};
   for(const r of rows.slice(hi+1)){if(!r)continue;const date=jlDate(r[I.d]);const op=String(r[I.op]||'').trim();if(!date||!op)continue;
-    if(/^(пополнение сч[её]та|вывод (средств|со сч[её]та))$/i.test(op)){const a=Math.round((n(r[I.in])-n(r[I.out]))*100)/100;if(!a)continue;
+    if(I.in>=0&&/^(пополнение сч[её]та|вывод (средств|со сч[её]та))$/i.test(op)){const a=Math.round((n(r[I.in])-n(r[I.out]))*100)/100;if(!a)continue;
       const base=['jl',date,a.toFixed(2)].join('|');seen[base]=(seen[base]||0)+1;deposits.push({date,amount:a,op,bankId:'jl:'+hash(base+'#'+seen[base])});continue;}
     if(/переуступк/i.test(op)||I.rev<0)continue;const m=date.slice(0,7);monthly[m]=Math.round(((monthly[m]||0)+n(r[I.rev]))*100)/100;}
   return {deposits,monthly,errors:[]};}
