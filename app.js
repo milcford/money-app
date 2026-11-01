@@ -12,6 +12,8 @@ const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,7);
 const byOrder=(a,b)=>(a.order??0)-(b.order??0);
 const COLORS={inc:'#2c4a9a',cash:'#c9a84c',savings:'#4caf72',card:'#4a3b1c',exp:'#0d2626'};
 const PALETTE=['#2c4a9a','#c9a84c','#4caf72','#4a3b1c','#0d2626','#8e44ad','#c0392b','#16a085','#d35400','#555'];
+async function ensureBlacks(){const acc=await raw('accounts');for(const[id,name,card]of[['mama_black','Мама Black','mama_t'],['anya_black','Аня Black','anya_t']])
+  if(acc.some(a=>a.id===card)&&!acc.some(a=>a.id===id))await putRaw('accounts',{id,name,kind:'card',icon:'🖤',color:'#222',initial:0,cardMask:'',order:50,updatedAt:1,_dirty:1});}
 async function load(){
   // migrate pre-sync records
   for(const st of ['accounts','ops','cats'])for(const r of await raw(st))if(!r.updatedAt)await putRaw(st,{...r,updatedAt:Date.now(),_dirty:1});
@@ -23,6 +25,7 @@ async function load(){
     for(const[n,ic]of[['Доход','💵'],['Аня','🛒'],['ЗП','🛒'],['Прочее','🛒']])await seed('cats',{id:'inc_'+j++,name:n,income:true,icon:ic,color:COLORS.inc,order:i++});j=0;
     for(const[n,ic]of[['Продукты','🧃'],['Развлечения','🎞️'],['Транспорт','🚌'],['Еда вне дома','🥤'],['Покупки','🛍️'],['Прочее','🛒'],['Пивной','🍺'],['Кальян','💨'],['Ремонт','🏠'],['на чай','🪙'],['Валенсия','✈️'],['парикмахерская','💇']])
       await seed('cats',{id:'exp_'+j++,name:n,income:false,icon:ic,color:COLORS.exp,order:i++});}
+  await ensureBlacks();
   for(const st of ['accounts','ops','cats'])S[st]=await all(st);S.accounts.sort(byOrder);S.cats.sort(byOrder);}
 // ---- sync ----
 let syncing=false,syncAgain=false,syncTimer=null,syncMsg='';
@@ -73,6 +76,7 @@ function perStep(d){setPer(shiftM(PER||month(),d));}
 function refreshView(){header();if(views[cur])views[cur](window._arg);}
 function perBar(){return `<div class="perbar"><button onclick="perStep(-1)">◀</button><span onclick="setPer(PER?'':month())">${esc(perLabel(PER))}</span><button onclick="perStep(1)">▶</button></div>`;}
 // Tinkoff Black wallet paired with a card wallet (fixed ids so devices don't duplicate)
+const pairOf=id=>{const c=S.accounts.find(a=>a.id!==id&&blackFor(a.id)&&blackFor(a.id).id===id);return c&&c.id;};
 function blackFor(cardId){const c=S.accounts.find(a=>a.id===cardId);if(!c||/black/i.test(c.name))return null;
   const id=cardId==='mama_t'?'mama_black':cardId==='anya_t'?'anya_black':cardId+'_black';
   return S.accounts.find(a=>a.id===id)||{id,name:c.name.split(/\s+/)[0]+' Black',kind:'card',icon:'🖤',color:'#222',initial:0,cardMask:'',order:50,_new:1};}
@@ -239,23 +243,30 @@ let pending=[];
 async function doImport(file){const text=Core.decode(await file.arrayBuffer());const r=Core.parseTBank(text);if(r.errors.length)return alert(r.errors.join('\n'));
   // group by card account
   const groups={};r.ops.forEach(o=>{const a=cardAccFor(o.card);(groups[a]=groups[a]||[]).push(o);});
-  pending=[];for(const a in groups)pending.push(...Core.reconcile(groups[a],S.ops,a,'cash',(blackFor(a)||{}).id).map(p=>({...p,card:a,accept:p.action!=='duplicate'})));
-  renderReview(r.skipped);}
-function renderReview(skipped){const dup=pending.filter(p=>p.action==='duplicate').length;const L={link:'Связать с ручной записью',transfer:'Перевод наличные ⇄ карта',add:'Новая операция'};
+  pending=[];for(const a in groups)pending.push(...Core.reconcile(groups[a],S.ops,a,'cash',(blackFor(a)||{}).id,pairOf(a)).map(p=>({...p,card:a,accept:p.action!=='duplicate'})));
+  IMP={closing:r.closing,accs:Object.keys(groups)};renderReview(r.skipped);}
+let IMP={};
+function renderReview(skipped){const dup=pending.filter(p=>p.action==='duplicate').length;const L={convert:'Перевод между своими счетами: исправить запись «Прочее» на карте',link:'Связать с ручной записью',transfer:'Перевод наличные ⇄ карта',add:'Новая операция'};
   $('#review').innerHTML=`<div class="card"><b>Проверка</b><div class="mut">Уже загружено ранее (пропущено): ${dup}. Отклонённых/неуспешных строк: ${skipped}.</div></div>
-  ${['link','transfer','add'].map(k=>{const it=pending.map((p,i)=>[p,i]).filter(([p])=>p.action===k);if(!it.length)return'';
+  ${['convert','link','transfer','add'].map(k=>{const it=pending.map((p,i)=>[p,i]).filter(([p])=>p.action===k);if(!it.length)return'';
    return `<div class="card"><b>${L[k]} (${it.length})</b>${it.map(([p,i])=>{const t=p.target&&S.ops.find(o=>o.id===p.target);
-    return `<label class="row"><input type="checkbox" style="width:auto" ${p.accept?'checked':''} onchange="pending[${i}].accept=this.checked"><div style="flex:1"><div>${esc(p.op.desc)}</div><div class="mut">${p.op.date.slice(0,10)} · ${esc(p.op.bankCategory)}${t?`<br>↔ ваша запись: ${t.date.slice(0,10)} ${fmt(t.amount)} ${esc(t.category||t.note||'')}`:''}${k==='transfer'?`<br>${esc(accName(p.from))} → ${esc(accName(p.to))}`:''}</div></div><b class="${p.op.amount<0?'neg':'pos'}">${fmt(p.op.amount)}</b></label>`;}).join('')}
+    return `<label class="row"><input type="checkbox" style="width:auto" ${p.accept?'checked':''} onchange="pending[${i}].accept=this.checked"><div style="flex:1"><div>${esc(p.op.desc)}</div><div class="mut">${p.op.date.slice(0,10)} · ${esc(p.op.bankCategory)}${t?`<br>↔ ваша запись: ${t.date.slice(0,10)} ${fmt(t.amount)} ${esc(t.category||t.note||'')}`:''}${k==='transfer'||k==='convert'?`<br>${esc(accName(p.from))} → ${esc(accName(p.to))}`:''}</div></div><b class="${p.op.amount<0?'neg':'pos'}">${fmt(p.op.amount)}</b></label>`;}).join('')}
     ${k==='transfer'?'<div class="mut">Снимите галочку, если это не наличные — тогда будет добавлено как обычная операция.</div>':''}</div>`;}).join('')}
+  <div class="card"><b>Остаток на счёте</b><div class="mut">${IMP.closing!=null?'В выписке указан остаток — он подставлен.':'В выписке Т‑Банка остатка нет. Введите текущий остаток из приложения банка — баланс кошелька подгоним под него (необязательно).'}</div>
+   ${(IMP.accs||[]).map(id=>`<label class="mut">${esc(accName(id))}, ₽</label><input type="number" step="0.01" inputmode="decimal" id="bal_${id}" value="${IMP.closing!=null&&IMP.accs.length===1?IMP.closing:''}">`).join('')}</div>
   <button class="b" onclick="applyImport()">Применить</button>`;}
-async function applyImport(){let n=0;for(const p of pending){const op=p.op;if(p.action==='duplicate')continue;
+async function applyImport(){let n=0;const bals={};(IMP.accs||[]).forEach(id=>{const v=parseFloat((($('#bal_'+id)||{}).value||'').replace(',','.'));if(!isNaN(v))bals[id]=v;});
+  for(const p of pending){const op=p.op;if(p.action==='duplicate')continue;
+  if(p.action==='convert'){const t=S.ops.find(o=>o.id===p.target);if(p.accept){await put('ops',{...t,type:'transfer',category:'',accountId:p.from,toAccountId:p.to,bankIds:[...(t.bankIds||[]),op.bankId],sides:[t.accountId,p.card],note:t.note||op.desc});n++;continue;}}
   if(p.action==='transfer'&&p.accept)for(const x of [p.from,p.to]){const c=S.accounts.find(a=>a.id===x);if(!c){const card=S.accounts.find(a=>blackFor(a.id)&&blackFor(a.id).id===x);if(card)await ensureAcc(blackFor(card.id));}}
   if(p.action==='link'&&p.accept){const t=S.ops.find(o=>o.id===p.target);t.bankIds=[...(t.bankIds||[]),op.bankId];if(p.side)t.sides=[...(t.sides||[]),p.side];await put('ops',t);n++;continue;}
   let o={id:uid(),amount:Math.abs(op.amount),date:op.date,note:op.desc,bankIds:[op.bankId],reviewed:false};
   if(p.action==='transfer'&&p.accept)o={...o,type:'transfer',accountId:p.from,toAccountId:p.to,category:''};
-  else if(p.action==='link'&&!p.accept||p.action==='transfer'&&!p.accept||p.action==='add'&&p.accept)o={...o,type:op.amount<0?'expense':'income',accountId:p.card,category:guessCat(op)};
+  else if(p.action==='link'&&!p.accept||p.action==='transfer'&&!p.accept||p.action==='convert'&&!p.accept||p.action==='add'&&p.accept)o={...o,type:op.amount<0?'expense':'income',accountId:p.card,category:guessCat(op)};
   else continue;await put('ops',o);n++;}
-  S.ops=await all('ops');toast('Импортировано: '+n);show('history');}
+  S.ops=await all('ops');
+  for(const id in bals){const acc=S.accounts.find(a=>a.id===id);if(!acc)continue;const b=Core.balances(S.accounts,S.ops)[id];acc.initial=Math.round(((+acc.initial||0)+bals[id]-b)*100)/100;await put('accounts',acc);}
+  S.accounts=await all('accounts');S.accounts.sort(byOrder);toast('Импортировано: '+n);show('history');}
 // ---- screenshot import (client-side OCR) ----
 let ssRows=[],ssAcc='tbank';
 function loadTesseract(){return window.Tesseract?Promise.resolve():new Promise((ok,no)=>{const sc=document.createElement('script');sc.src='https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';sc.onload=ok;sc.onerror=()=>no(new Error('Не удалось загрузить модуль распознавания (нужен интернет при первом запуске)'));document.head.appendChild(sc);});}
@@ -280,12 +291,12 @@ function renderSS(){$('#ssedit').innerHTML=`<div class="card"><b>Распозн�
   <button class="b" onclick="ssToReview()">Далее: проверка дублей</button></div>`;}
 function ssToReview(){const rows=ssRows.filter(r=>r.amount&&r.date).map(r=>({...r,date:r.date+'T00:00:00',amount:+r.amount}));
   const ops=Core.screenshotIds(rows).map(r=>({bankId:r.bankId,date:r.date,amount:r.amount,desc:r.desc,bankCategory:r.cat||'',card:'',mcc:''}));
-  pending=Core.reconcile(ops,S.ops,ssAcc,'cash',(blackFor(ssAcc)||{}).id).map(p=>({...p,card:ssAcc,accept:p.action!=='duplicate'}));
+  IMP={accs:[ssAcc]};pending=Core.reconcile(ops,S.ops,ssAcc,'cash',(blackFor(ssAcc)||{}).id,pairOf(ssAcc)).map(p=>({...p,card:ssAcc,accept:p.action!=='duplicate'}));
   $('#ssedit').innerHTML='';renderReview(0);$("#review").scrollIntoView();}
 // ---- CoinKeeper import ----
 let CK=null;
 const ckSkipped=()=>JSON.parse(localStorage.ckSkipped||'[]');
-const APP_VER='v14';
+const APP_VER='v15';
 let CKB=[];try{CKB=JSON.parse(localStorage.ckBanks||'[]');}catch(e){CKB=[];}
 function ckbStatus(){const el=$('#ckb');if(!el)return;el.innerHTML=CKB.length?'✅ Выписки загружены: '+CKB.map(b=>esc((b.accountId?accName(b.accountId):b.name)+' ('+b.ops.length+' операций)')).join(', ')+' <button class="b s" onclick="CKB=[];localStorage.removeItem(\'ckBanks\');ckbStatus();if(CK){CK=Core.planCoinKeeper(CK.items.map(i=>i.row),{accounts:S.accounts,cats:S.cats,ops:S.ops,skipped:ckSkipped()});CK.items.forEach(i=>{i.accept=i.action===\'add\'||i.action===\'link\'});renderCK();}">Сбросить</button>':'<span class="neg">⚠️ Выписки не загружены — подсказок банка не будет. Сначала нажмите кнопку выше.</span>';}
 async function ckBanks(files){CKB=[];for(const f of files){const r=Core.parseTBank(Core.decode(await f.arrayBuffer()));if(r.ops.length)CKB.push({name:f.name,ops:r.ops});}

@@ -33,6 +33,7 @@ function parseTBank(text){
   for(const k in COLS){ for(const n of COLS[k]){ const i=hdr.findIndex(h=>h===n); if(i>=0){idx[k]=i;break;} }
     if(idx[k]==null) for(const n of COLS[k]){ const i=hdr.findIndex(h=>h.startsWith(n)); if(i>=0){idx[k]=i;break;} } }
   if(idx.date==null||(idx.amount==null&&idx.pamount==null)) return {ops:[],skipped:0,errors:['Не найдены колонки «Дата операции» / «Сумма операции»']};
+  const bi=hdr.findIndex(h=>/^(остаток|баланс)/.test(h));let closing=null,closingDate='';
   const ops=[],seen={};let skipped=0;
   for(const r of rows.slice(1)){
     const g=k=>idx[k]!=null?(r[idx[k]]||'').trim():'';
@@ -43,9 +44,10 @@ function parseTBank(text){
     const base=[date,amount.toFixed(2),norm(desc),card.replace(/\D/g,'')].join('|');
     // identical rows inside one file (genuinely two same purchases) get an occurrence suffix
     seen[base]=(seen[base]||0)+1; const id=hash(base+'#'+seen[base]);
+    if(bi>=0){const b=num((r[bi]||'').trim());if(b!=null&&date>=closingDate){closing=b;closingDate=date;}}
     ops.push({bankId:id,date,amount,currency:g('currency')||'RUB',card,desc,bankCategory:g('category'),mcc:g('mcc')});
   }
-  return {ops,skipped,errors:[]};
+  return {ops,skipped,errors:[],closing};
 }
 
 // ---------- Screenshot (OCR text) parser ----------
@@ -200,7 +202,7 @@ const days=(a,b)=>Math.abs(new Date(a)-new Date(b))/864e5;
 // Classify imported ops against existing operations.
 // existing: [{id,type,amount(positive),accountId,toAccountId,date,bankIds:[]}], cardAccountId, cashAccountId
 const OWN=/между своими счетами/i;
-function reconcile(imported, existing, cardAcc, cashAcc, ownAcc){
+function reconcile(imported, existing, cardAcc, cashAcc, ownAcc, pairAcc){
   const known=new Set(); existing.forEach(o=>(o.bankIds||[]).forEach(b=>known.add(b)));
   const used=new Set(); const out=[];
   for(const op of imported){
@@ -221,6 +223,10 @@ function reconcile(imported, existing, cardAcc, cashAcc, ownAcc){
     if(OWN.test(op.desc||'')){const t=existing.find(o=>!used.has(o.id)&&o.type==='transfer'&&Math.abs(o.amount-abs)<0.005&&days(o.date.slice(0,10),op.date.slice(0,10))<=1&&
         (dir==='out'?o.accountId===cardAcc:o.toAccountId===cardAcc)&&!(o.sides||[]).includes(cardAcc));
       if(t){used.add(t.id);out.push({op,action:'link',target:t.id,side:cardAcc});continue;}
+      // Black statement: the other side was recorded on the paired card as income/expense (e.g. «Прочее») -> convert it to a transfer
+      if(pairAcc){const want=dir==='out'?'income':'expense';const cs=existing.filter(o=>!used.has(o.id)&&o.type===want&&o.accountId===pairAcc&&Math.abs(o.amount-abs)<0.005&&days(o.date.slice(0,10),op.date.slice(0,10))<=1&&(OWN.test(o.note||'')||/^прочее$/i.test(o.category||'')))
+          .sort((a,b)=>(OWN.test(b.note||'')-OWN.test(a.note||''))||days(a.date,op.date)-days(b.date,op.date));
+        if(cs.length){used.add(cs[0].id);out.push({op,action:'convert',target:cs[0].id,from:dir==='out'?cardAcc:pairAcc,to:dir==='out'?pairAcc:cardAcc});continue;}}
       if(ownAcc&&ownAcc!==cardAcc){out.push({op,action:'transfer',from:dir==='in'?ownAcc:cardAcc,to:dir==='in'?cardAcc:ownAcc});continue;}}
     const c=isCash(op);
     if(c==='in') out.push({op,action:'transfer',from:cashAcc,to:cardAcc});
