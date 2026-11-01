@@ -298,11 +298,12 @@ async function doImport(file){const sel=S.accounts.find(a=>a.id===($('#csv_acc')
   if(r.bank==='yandex')r.ops.forEach(o=>o.card='');
   // group by card account
   const groups={};r.ops.forEach(o=>{const a=cardAccFor(o.card,r.bank);(groups[a]=groups[a]||[]).push(o);});
-  pending=[];for(const a in groups)pending.push(...Core.reconcile(groups[a],S.ops,a,'cash',(blackFor(a)||{}).id,pairOf(a),bankAccs().map(x=>x.id).filter(x=>x!==a)).map(p=>({...p,card:a,accept:p.action!=='duplicate'})));
+  pending=[];for(const a in groups){const st=S.ops.filter(o=>(o.accountId===a||o.toAccountId===a)&&!/корректировка/i.test(o.category||'')).map(o=>o.date.slice(0,10)).sort()[0]||'';
+    pending.push(...Core.reconcile(groups[a],S.ops,a,'cash',(blackFor(a)||{}).id,pairOf(a),bankAccs().map(x=>x.id).filter(x=>x!==a)).map(p=>({...p,card:a,old:!!st&&p.op.date.slice(0,10)<st,accept:p.action!=='duplicate'&&!(st&&p.op.date.slice(0,10)<st)})));}
   IMP={closing:r.closing,accs:Object.keys(groups)};renderReview(r.skipped);}
 let IMP={};
 function renderReview(skipped){const dup=pending.filter(p=>p.action==='duplicate').length;const L={convert:'Перевод между своими счетами: исправить запись на другом счёте (станет переводом)',link:'Связать с ручной записью',transfer:'Перевод наличные ⇄ карта',add:'Новая операция'};
-  $('#review').innerHTML=`<div class="card"><b>Проверка</b><div class="mut">Уже загружено ранее (пропущено): ${dup}. Отклонённых/неуспешных строк: ${skipped}.</div></div>
+  $('#review').innerHTML=`<div class="card"><b>Проверка</b><div class="mut">Уже загружено ранее (пропущено): ${dup}. Отклонённых/неуспешных строк: ${skipped}.</div>${pending.some(p=>p.old)?`<div class="mut">Строки раньше начала истории счёта (${pending.filter(p=>p.old).length}) не отмечены: они уже учтены в начальном остатке.</div>`:''}</div>
   ${['convert','link','transfer','add'].map(k=>{const it=pending.map((p,i)=>[p,i]).filter(([p])=>p.action===k);if(!it.length)return'';
    return `<div class="card"><b>${L[k]} (${it.length})</b>${it.map(([p,i])=>{const t=p.target&&S.ops.find(o=>o.id===p.target);
     return `<label class="row"><input type="checkbox" style="width:auto" ${p.accept?'checked':''} onchange="pending[${i}].accept=this.checked"><div style="flex:1"><div>${esc(p.op.desc)}</div><div class="mut">${p.op.date.slice(0,10)} · ${esc(p.op.bankCategory)}${t?`<br>↔ ваша запись: ${t.date.slice(0,10)} ${fmt(t.amount)} ${esc(t.category||t.note||'')}`:''}${k==='transfer'||k==='convert'?`<br>${esc(accName(p.from))} → ${esc(accName(p.to))}`:''}</div></div><b class="${p.op.amount<0?'neg':'pos'}">${fmt(p.op.amount)}</b></label>`;}).join('')}
@@ -351,7 +352,7 @@ function ssToReview(){const rows=ssRows.filter(r=>r.amount&&r.date).map(r=>({...
 // ---- CoinKeeper import ----
 let CK=null;
 const ckSkipped=()=>JSON.parse(localStorage.ckSkipped||'[]');
-const APP_VER='v21';
+const APP_VER='v22';
 let CKB=[];try{CKB=JSON.parse(localStorage.ckBanks||'[]');}catch(e){CKB=[];}
 function ckbStatus(){const el=$('#ckb');if(!el)return;el.innerHTML=CKB.length?'✅ Выписки загружены: '+CKB.map(b=>esc((b.accountId?accName(b.accountId):b.name)+' ('+b.ops.length+' операций)')).join(', ')+' <button class="b s" onclick="CKB=[];localStorage.removeItem(\'ckBanks\');ckbStatus();if(CK){CK=Core.planCoinKeeper(CK.items.map(i=>i.row),{accounts:S.accounts,cats:S.cats,ops:S.ops,skipped:ckSkipped()});CK.items.forEach(i=>{i.accept=i.action===\'add\'||i.action===\'link\'});renderCK();}">Сбросить</button>':'<span class="neg">⚠️ Выписки не загружены — подсказок банка не будет. Сначала нажмите кнопку выше.</span>';}
 async function ckBanks(files){CKB=[];for(const f of files){const r=Core.parseTBank(Core.decode(await f.arrayBuffer()));if(r.ops.length)CKB.push({name:f.name,ops:r.ops});}

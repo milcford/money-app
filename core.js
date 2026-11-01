@@ -233,7 +233,7 @@ function reconcile(imported, existing, cardAcc, cashAcc, ownAcc, pairAcc, others
       if(ownAcc&&ownAcc!==cardAcc){out.push({op,action:'transfer',from:dir==='in'?ownAcc:cardAcc,to:dir==='in'?cardAcc:ownAcc});continue;}}
     // transfer from/to own card at another bank (e.g. Yandex <- T-Bank Card2Card): turn that card's expense/income into a transfer
     if(others&&others.length&&/(t-?bank|т-?банк|тинькофф|card2card|себе (в|из) друг)/i.test(op.desc||'')){const want=dir==='in'?'expense':'income';
-      const cs=existing.filter(o=>!used.has(o.id)&&o.type===want&&others.includes(o.accountId)&&o.accountId!==cardAcc&&Math.abs(o.amount-abs)<0.005&&days(o.date.slice(0,10),op.date.slice(0,10))<=1);
+      const cs=existing.filter(o=>!used.has(o.id)&&o.type===want&&others.includes(o.accountId)&&o.accountId!==cardAcc&&(want!=='income'||/(t-?bank|т-?банк|тинькофф|card2card)/i.test(o.note||''))&&Math.abs(o.amount-abs)<0.005&&days(o.date.slice(0,10),op.date.slice(0,10))<=1);
       if(cs.length===1){used.add(cs[0].id);out.push({op,action:'convert',target:cs[0].id,from:dir==='in'?cs[0].accountId:cardAcc,to:dir==='in'?cardAcc:cs[0].accountId});continue;}}
     const c=isCash(op);
     if(c==='in') out.push({op,action:'transfer',from:cashAcc,to:cardAcc});
