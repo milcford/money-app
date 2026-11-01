@@ -49,3 +49,5 @@ input,select,.b{font-size:17px;padding:10px;border-radius:10px;border:1px solid 
 
 .stick{position:sticky;bottom:calc(env(safe-area-inset-bottom) + 78px);z-index:9;display:flex;gap:8px;padding:8px 0;background:linear-gradient(transparent,#000c 30%)}.stick .b{margin:0}.stick .b.s{flex:0 0 auto;width:auto;padding:0 14px}.stick #rv_apply{flex:1}
 #rv_end{height:90px}
+
+.c,.c *{-webkit-touch-callout:none;-webkit-user-select:none;user-select:none}

@@ -254,17 +254,14 @@ function detail(k,id){const it=itemOf(k,id),f=opMatch(k,id);const all=S.ops.filt
   <div class="card"><div class="row"><span>${esc(perLabel(PER))}${k==='acc'?' (приход − расход)':''}</span><b class="${k==='exp'?'neg':'pos'}">${fmt(tot)}</b></div>
   <button class="b" onclick="${add.replace(/"/g,'&quot;')}">+ Добавить</button>
   ${k==='acc'?(()=>{const bal=Core.balances(S.accounts,S.ops)[id];return `<div class="row"><span>Остаток сейчас</span><b>${fmt(bal)}</b></div>${it.credit?`<div class="row"><span>Кредитка</span><span>${esc(credInfo(it,bal))}${it.limit?' · лимит '+fmt(it.limit):''}</span></div>`:''}`;})():''}
-  ${k==='acc'&&bankOf(it)?`<label class="b s">📄 Загрузить выписку${bankOf(it)==='yandex'?' (PDF)':' (CSV)'}<input type="file" accept="${bankOf(it)==='yandex'?'.pdf,application/pdf':'.csv,text/csv'}" hidden onchange="accImport('${id}',this.files[0])"></label>
-  <label class="b s">📷 Загрузить скриншоты<input type="file" accept="image/*" multiple hidden onchange="accShots('${id}',this.files)"></label>`:''}
-  <button class="b s" onclick="window._hf={k:'${k}',id:'${id}',m:PER};show('history')">Открыть в Истории</button>
-  <button class="b s" onclick="editCirc('${k}','${id}')">✎ ${k==='acc'?'Изменить счёт / указать остаток':'Изменить'}</button></div>
+</div>
   <div class="card"><b>Операции (${ops.length})</b></div>${dayGroups(ops.slice(0,300))}${ops.length>300?`<div class="mut">…ещё ${ops.length-300}, см. Историю</div>`:''}
   <div class="card"><b>По месяцам</b>${Object.entries(bm).sort((a,b)=>b[0].localeCompare(a[0])).map(([m,v])=>`<div class="row" onclick="setPer('${m}')" style="cursor:pointer"><span>${perLabel(m)}</span><b>${fmt(v)}</b></div>`).join('')||'<div class="mut">Нет операций</div>'}</div>`;}
 // ---- drag & drop between circles ----
 let D=null;
 function circAt(x,y){const el=document.elementFromPoint(x,y);return el&&el.closest('.c:not(.add)');}
 V.addEventListener('pointerdown',e=>{const c=e.target.closest('.c');if(!c)return;
-  D={c,x:e.clientX,y:e.clientY,drag:false,long:setTimeout(()=>{if(D&&!D.drag&&c.dataset.k!=='add'){D.done=true;navigator.vibrate&&navigator.vibrate(20);editCirc(c.dataset.k,c.dataset.id);}},550)};});
+  D={c,x:e.clientX,y:e.clientY,drag:false,long:setTimeout(()=>{if(D&&!D.drag&&c.dataset.k!=='add'){D.done=true;navigator.vibrate&&navigator.vibrate(20);circMenu(c.dataset.k,c.dataset.id);}},450)};});
 V.addEventListener('pointermove',e=>{if(!D||D.done)return;const dx=e.clientX-D.x,dy=e.clientY-D.y;
   if(!D.drag&&Math.hypot(dx,dy)>10){clearTimeout(D.long);if(!e.target.closest('.ic')||D.c.dataset.k==='add'||D.c.dataset.k==='exp'){D=null;return;}
     D.drag=true;const ic=D.c.querySelector('.ic'),g=document.createElement('div');g.id='ghost';g.textContent=ic.textContent;g.style.background=getComputedStyle(ic).backgroundColor;document.body.appendChild(g);D.g=g;
@@ -273,12 +270,23 @@ V.addEventListener('pointermove',e=>{if(!D||D.done)return;const dx=e.clientX-D.x
 function endDrag(e){if(!D)return;clearTimeout(D.long);const d=D;D=null;document.querySelectorAll('.c').forEach(t=>t.classList.remove('hot','dim'));if(d.g)d.g.remove();if(d.done)return;
   if(d.drag){const t=circAt(e.clientX,e.clientY);if(t&&validDrop(d.c,t))dropOp(d.c,t);return;}
   if(e.type==='pointerup')tapCirc(d.c);}
-V.addEventListener('pointerup',endDrag);V.addEventListener('pointercancel',endDrag);
+V.addEventListener('pointerup',endDrag);
+// iOS may fire pointercancel during a still long-press: keep the long-press timer alive, track the finger via touch events instead
+V.addEventListener('pointercancel',e=>{if(D&&!D.drag&&!D.done){D.cancelled=true;return;}endDrag(e);});
+V.addEventListener('touchmove',e=>{if(!D||!D.cancelled||D.done)return;const t=e.touches[0];if(Math.hypot(t.clientX-D.x,t.clientY-D.y)>10){clearTimeout(D.long);D=null;}},{passive:true});
+V.addEventListener('touchend',()=>{if(D&&D.cancelled&&!D.done){clearTimeout(D.long);const c=D.c;D=null;tapCirc(c);}});
 function validDrop(s,t){const a=s.dataset.k,b=t.dataset.k;if(s===t)return false;return (a==='inc'&&b==='acc')||(a==='acc'&&(b==='acc'||b==='exp'));}
 function dropOp(s,t){const a=s.dataset.k,b=t.dataset.k;
   if(a==='inc')opSheet({type:'income',category:itemOf('inc',s.dataset.id).name,accountId:t.dataset.id});
   else if(b==='acc')opSheet({type:'transfer',accountId:s.dataset.id,toAccountId:t.dataset.id});
   else opSheet({type:'expense',accountId:s.dataset.id,category:itemOf('exp',t.dataset.id).name});}
+function circMenu(k,id){const it=itemOf(k,id);if(!it)return;const bk=k==='acc'&&bankOf(it),ya=bk==='yandex';
+  openSheet(`<b>${esc(it.icon||'')} ${esc(it.name)}</b>
+  ${bk?`<label class="b s">📄 Загрузить выписку${ya?' (PDF)':' (CSV)'}<input type="file" accept="${ya?'.pdf,application/pdf':'.csv,text/csv'}" hidden onchange="closeSheet();accImport('${id}',this.files[0])"></label>
+  <label class="b s">📷 Загрузить скриншоты<input type="file" accept="image/*" multiple hidden onchange="closeSheet();accShots('${id}',this.files)"></label>`:''}
+  <button class="b s" onclick="closeSheet();window._hf={k:'${k}',id:'${id}',m:PER};show('history')">Открыть в Истории</button>
+  <button class="b s" onclick="closeSheet();editCirc('${k}','${id}')">✎ ${k==='acc'?'Изменить счёт / указать остаток':'Изменить'}</button>
+  <button class="b s" onclick="closeSheet()">Отмена</button>`);}
 function tapCirc(c){const k=c.dataset.k,id=c.dataset.id;
   if(k==='add')return editCirc(c.dataset.add);
   show('detail',{k,id});}
@@ -367,7 +375,7 @@ function ssToReview(){const rows=ssRows.filter(r=>r.amount&&r.date).map(r=>({...
 // ---- CoinKeeper import ----
 let CK=null;
 const ckSkipped=()=>JSON.parse(localStorage.ckSkipped||'[]');
-const APP_VER='v25';
+const APP_VER='v26';
 let CKB=[];try{CKB=JSON.parse(localStorage.ckBanks||'[]');}catch(e){CKB=[];}
 function ckbStatus(){const el=$('#ckb');if(!el)return;el.innerHTML=CKB.length?'✅ Выписки загружены: '+CKB.map(b=>esc((b.accountId?accName(b.accountId):b.name)+' ('+b.ops.length+' операций)')).join(', ')+' <button class="b s" onclick="CKB=[];localStorage.removeItem(\'ckBanks\');ckbStatus();if(CK){CK=Core.planCoinKeeper(CK.items.map(i=>i.row),{accounts:S.accounts,cats:S.cats,ops:S.ops,skipped:ckSkipped()});CK.items.forEach(i=>{i.accept=i.action===\'add\'||i.action===\'link\'});renderCK();}">Сбросить</button>':'<span class="neg">⚠️ Выписки не загружены — подсказок банка не будет. Сначала нажмите кнопку выше.</span>';}
 async function ckBanks(files){CKB=[];for(const f of files){const r=Core.parseTBank(Core.decode(await f.arrayBuffer()));if(r.ops.length)CKB.push({name:f.name,ops:r.ops});}
