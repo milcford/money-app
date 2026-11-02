@@ -211,6 +211,15 @@ const days=(a,b)=>Math.abs(new Date(a)-new Date(b))/864e5;
 const OWN=/между своими счетами/i;
 // internal bank transfer whose other side is not named (T-Bank «Внутрибанковский перевод», «Внутренний перевод», «Перевод между счетами»); OCR may cut the tail
 const INB=/внутрибанков|внутренн\S* перев|перевод между (своими )?сч/i;
+// person-to-person payment description from T-Bank statements: «Эдвард О.», «Елена П.»
+const PERSON=/^\s*[А-ЯЁ][а-яё]+(-[А-ЯЁ][а-яё]+)?\s+[А-ЯЁ]\.\s*$/;
+// a stored mis-linked transfer: own-account transfer whose description is a person's name (not own-account wording)
+function p2pMislink(o){return !!o&&!o.deleted&&o.type==='transfer'&&PERSON.test(o.note||'')&&!OWN.test(o.note||'')&&!INB.test(o.note||'')&&(o.bankIds||[]).filter(b=>!String(b).startsWith('ck:')).length>=2;}
+// split it back: sender side = expense with the original bank ids, receiver side = income (last appended id) left for review
+function splitP2P(o,fromAcc,toAcc){const ids=(o.bankIds||[]);const last=ids[ids.length-1];
+  const out={...o,type:'expense',accountId:fromAcc,toAccountId:undefined,category:'Прочее',sides:undefined,bankIds:ids.slice(0,-1),reviewed:false,review:0};
+  const inc={id:o.id+'_in',type:'income',amount:o.amount,accountId:toAcc,date:o.date,note:'Входящий перевод',category:'',bankIds:[last],reviewed:false,review:1};
+  return [out,inc];}
 function reconcile(imported, existing, cardAcc, cashAcc, ownAcc, pairAcc, others, opts){
   const incomeIn=!!(opts&&opts.incomeIn);
   const known=new Set(); existing.forEach(o=>(o.bankIds||[]).forEach(b=>known.add(b)));
@@ -248,7 +257,7 @@ function reconcile(imported, existing, cardAcc, cashAcc, ownAcc, pairAcc, others
       const cs=existing.filter(o=>!used.has(o.id)&&o.type===want&&others.includes(o.accountId)&&o.accountId!==cardAcc&&(want!=='income'||/(t-?bank|т-?банк|тинькофф|card2card)/i.test(o.note||''))&&Math.abs(o.amount-abs)<0.005&&days(o.date.slice(0,10),op.date.slice(0,10))<=1);
       if(cs.length===1){used.add(cs[0].id);out.push({op,action:'convert',target:cs[0].id,from:dir==='in'?cs[0].accountId:cardAcc,to:dir==='in'?cardAcc:cs[0].accountId});continue;}}
     if(INB.test(op.desc||'')){const want=dir==='in'?'expense':'income';
-      const cs=existing.filter(o=>!used.has(o.id)&&o.type===want&&o.accountId!==cardAcc&&Math.abs(o.amount-abs)<0.005&&days(o.date.slice(0,10),op.date.slice(0,10))<=1)
+      const cs=existing.filter(o=>!used.has(o.id)&&o.type===want&&o.accountId!==cardAcc&&!PERSON.test(o.note||'')&&Math.abs(o.amount-abs)<0.005&&days(o.date.slice(0,10),op.date.slice(0,10))<=1)
         .sort((a,b)=>(INB.test(b.note||'')||OWN.test(b.note||''))-(INB.test(a.note||'')||OWN.test(a.note||''))||days(a.date,op.date)-days(b.date,op.date));
       if(cs.length){used.add(cs[0].id);out.push({op,action:'convert',target:cs[0].id,from:dir==='in'?cs[0].accountId:cardAcc,to:dir==='in'?cardAcc:cs[0].accountId});continue;}
       out.push({op,action:'transfer',from:dir==='in'?null:cardAcc,to:dir==='in'?cardAcc:null,pick:true});continue;}
@@ -361,7 +370,7 @@ function parseYandexText(lines){const D=/(\d{2})\.(\d{2})\.(\d{4})/,AM=/([+\-−
 function needsInReview(o,ids){if(o.deleted||o.review===0)return false;const bank=(o.bankIds||[]).some(b=>!String(b).startsWith('ck:'));
   if(o.type==='transfer')return ids.includes(o.toAccountId)&&!ids.includes(o.accountId)&&bank;
   if(o.type==='income')return ids.includes(o.accountId)&&!o.category;return false;}
-root.Core={needsInReview,parseJetlendMain,planJetlendSnap,JL,jlDate,parseJetlend,planJetlend,moveOp,opCmp,shotTimes,cleanYandexDesc,parseYandexText,ownToTransfer,OWN,INB,suggestCoinKeeper,guessBankAccount,bankKind,parseCoinKeeper,planCoinKeeper,decideOp,parseScreenshotText,screenshotIds,similar,decode,parseTBank,reconcile,balances,hash,isCash};
+root.Core={PERSON,p2pMislink,splitP2P,needsInReview,parseJetlendMain,planJetlendSnap,JL,jlDate,parseJetlend,planJetlend,moveOp,opCmp,shotTimes,cleanYandexDesc,parseYandexText,ownToTransfer,OWN,INB,suggestCoinKeeper,guessBankAccount,bankKind,parseCoinKeeper,planCoinKeeper,decideOp,parseScreenshotText,screenshotIds,similar,decode,parseTBank,reconcile,balances,hash,isCash};
 if(typeof module!=='undefined')module.exports=root.Core;
 })(typeof self!=='undefined'?self:globalThis);
 

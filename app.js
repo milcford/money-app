@@ -35,7 +35,7 @@ async function load(){
     for(const[n,ic]of[['Доход','💵'],['Аня','🛒'],['ЗП','🛒'],['Прочее','🛒']])await seed('cats',{id:'inc_'+j++,name:n,income:true,icon:ic,color:COLORS.inc,order:i++});j=0;
     for(const[n,ic]of[['Продукты','🧃'],['Развлечения','🎞️'],['Транспорт','🚌'],['Еда вне дома','🥤'],['Покупки','🛍️'],['Прочее','🛒'],['Пивной','🍺'],['Кальян','💨'],['Ремонт','🏠'],['на чай','🪙'],['Валенсия','✈️'],['парикмахерская','💇']])
       await seed('cats',{id:'exp_'+j++,name:n,income:false,icon:ic,color:COLORS.exp,order:i++});}
-  await ensureBlacks();await cleanYandex();await ensureJetlend();await migIncomeIn();
+  await ensureBlacks();await cleanYandex();await ensureJetlend();await migIncomeIn();await migP2P();
   for(const st of ['accounts','ops','cats'])S[st]=await all(st);S.accounts.sort(byOrder);S.cats.sort(byOrder);}
 // ---- sync ----
 let syncing=false,syncAgain=false,syncTimer=null,syncMsg='';
@@ -102,6 +102,15 @@ async function migIncomeIn(){if(localStorage.migIncomeIn)return;const accs=await
   for(const a of accs)if(!a.deleted&&(a.id==='mama_black'||a.id==='mama_t'||/^мама/i.test(a.name))&&a.incomeIn===undefined){a.incomeIn=true;await put('accounts',a);}
   const ids=(await raw('accounts')).filter(a=>a.incomeIn&&!a.deleted).map(a=>a.id);
   for(const o of await raw('ops'))if(!o.review&&Core.needsInReview(o,ids)){o.review=1;await put('ops',o);}localStorage.migIncomeIn=1;}
+// v41: «Эдвард О.»-style payments wrongly linked as transfer (INB matched any same-amount expense); split into sender expense + receiver income for review
+const P2P_FIX={mvy61wzrwtrzy:'anya_t',mvy61x3roviqi:'anya_t'}; // already resolved to income on the receiver by v40; sender from statement
+async function migP2P(){if(localStorage.migP2P)return;let n=0;
+  for(const o of await raw('ops')){if(o.deleted)continue;let pair=null;
+    if(Core.p2pMislink(o))pair=Core.splitP2P(o,o.accountId,o.toAccountId);
+    else if(P2P_FIX[o.id]&&o.type==='income'&&(o.bankIds||[]).length>=2&&Core.PERSON.test(o.note||''))pair=Core.splitP2P(o,P2P_FIX[o.id],o.accountId);
+    if(!pair)continue;const ex=(await raw('ops')).find(x=>x.id===pair[1].id);if(ex)continue;
+    for(const x of pair)await put('ops',x);n++;}
+  localStorage.migP2P=1;if(n)setTimeout(()=>toast('Исправлено ошибочных переводов: '+n),1500);}
 const inIds=()=>S.accounts.filter(a=>a.incomeIn).map(a=>a.id);
 const toReview=id=>S.ops.filter(o=>o.review===1&&!o.deleted&&(!id||o.accountId===id||o.toAccountId===id));
 async function resolveIn(oid,cat){const o=S.ops.find(x=>x.id===oid);if(!o)return;
@@ -142,7 +151,7 @@ function pager(items,per,id){const cols=_cols=COLS();per=per/4*cols;const pages=
 function dots(el){const i=Math.round(el.scrollLeft/el.clientWidth);el.nextElementSibling.querySelectorAll('i').forEach((d,j)=>d.classList.toggle('on',i===j));}
 const views={
 inreview(id){const L=toReview(id).sort((a,b)=>b.date.localeCompare(a.date));V.innerHTML=`<div class="hdr"><h2>❓ Разобрать входящие</h2><button onclick="show('home')">‹ Назад</button></div>
-  <div class="mut">Счета «Входящие = доход»: всё, что пришло, — доход. Выберите категорию или оставьте как есть.</div>
+  <div class="mut">${id?esc(accName(id))+': ':''}входящие, которые нужно разобрать. Выберите категорию или оставьте как есть.</div>
   ${L.length?L.map(o=>`<div class="card"><div>${esc(o.note||'')} <b class="pos">+${fmt(o.amount)}</b></div><div class="mut">${o.date.slice(0,10)} · ${o.type==='transfer'?esc(accName(o.accountId))+' → '+esc(accName(o.toAccountId)):'→ '+esc(accName(o.accountId))}</div>
    <div class="seg"><button onclick="resolveIn('${o.id}','Доход')">Доход</button><button onclick="resolveIn('${o.id}','Прочее')">Прочее</button><button onclick="resolveIn('${o.id}','')">${o.type==='transfer'?'Оставить перевод':'Оставить'}</button></div></div>`).join(''):'<div class="card">Всё разобрано 👍</div>'}`;},
 recon(){reconSheet();},
@@ -469,7 +478,7 @@ function ssToReview(){const rows=ssRows.filter(r=>r.amount&&r.date).map(r=>({...
 // ---- CoinKeeper import ----
 let CK=null;
 const ckSkipped=()=>JSON.parse(localStorage.ckSkipped||'[]');
-const APP_VER='v40';
+const APP_VER='v41';
 let CKB=[];try{CKB=JSON.parse(localStorage.ckBanks||'[]');}catch(e){CKB=[];}
 function ckbStatus(){const el=$('#ckb');if(!el)return;el.innerHTML=CKB.length?'✅ Выписки загружены: '+CKB.map(b=>esc((b.accountId?accName(b.accountId):b.name)+' ('+b.ops.length+' операций)')).join(', ')+' <button class="b s" onclick="CKB=[];localStorage.removeItem(\'ckBanks\');ckbStatus();if(CK){CK=Core.planCoinKeeper(CK.items.map(i=>i.row),{accounts:S.accounts,cats:S.cats,ops:S.ops,skipped:ckSkipped()});CK.items.forEach(i=>{i.accept=i.action===\'add\'||i.action===\'link\'});renderCK();}">Сбросить</button>':'<span class="neg">⚠️ Выписки не загружены — подсказок банка не будет. Сначала нажмите кнопку выше.</span>';}
 async function ckBanks(files){CKB=[];for(const f of files){const r=Core.parseTBank(Core.decode(await f.arrayBuffer()));if(r.ops.length)CKB.push({name:f.name,ops:r.ops});}
