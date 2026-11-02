@@ -53,6 +53,15 @@ let syncing=false,syncAgain=false,syncTimer=null,syncMsg='';
 const SAME_ORIGIN=!/github\.io$/.test(location.hostname)&&location.protocol==='https:';
 const syncUrl=()=>(localStorage.syncUrl||(SAME_ORIGIN?location.origin:'')).replace(/\/+$/,'');
 function scheduleSync(){clearTimeout(syncTimer);syncTimer=setTimeout(runSync,1500);}
+async function setInitialFor(id,want){const accs=await all('accounts'),ops=(await all('ops')).filter(o=>!o.deleted),acc=accs.find(a=>a.id===id);if(!acc||isNaN(want))return null;
+  const cur=Core.balances(accs,ops)[id]||0;acc.initial=Math.round(((+acc.initial||0)+want-cur)*100)/100;await put('accounts',acc);return acc.initial;}
+// v51: real Split debt on 2026-11-02 13:43 MSK = 73 551,05 — run only once dedup is done and nothing is waiting to sync
+async function migSplitBal(){if(localStorage.migSplitBal||!localStorage.migSplitDups||dirtyN||!localStorage.syncToken)return;
+  const v=await setInitialFor('ya_split',-73551.05);if(v==null)return;localStorage.migSplitBal=JSON.stringify({at:Date.now(),initial:v});await refresh();}
+async function corrBal(id){const a=S.accounts.find(x=>x.id===id);if(!a)return;const cur=Core.balances(S.accounts,S.ops)[id]||0;
+  const s=prompt(a.credit?'Текущий долг по счёту «'+a.name+'», ₽ (из приложения банка). Можно ввести «доступно 26448,95»':'Текущий остаток «'+a.name+'», ₽',a.credit?String(Math.round(-cur*100)/100):String(Math.round(cur*100)/100));if(s==null)return;
+  const av=/дост/i.test(s),v=pnum(s.replace(/[^\d,.\-]/g,''));if(isNaN(v))return alert('Не понял сумму');
+  await setInitialFor(id,a.credit?(av?v-(+a.limit||0):-Math.abs(v)):v);closeSheet();await refresh();}
 let dirtyN=0;
 async function countDirty(){if(!db)return;let n=0;for(const st of ['accounts','ops','cats'])for(const r of await raw(st))if(r._dirty)n++;dirtyN=n;const e=document.getElementById('sync');if(e){e.textContent=syncLabel();e.classList.toggle('off',!navigator.onLine);}}
 function syncLabel(){const off=navigator.onLine===false,q=dirtyN?(off?' · '+dirtyN+' не отправлено':' ↑'+dirtyN):'';if(off)return '⚠ офлайн'+q;return syncBase()+q;}
@@ -65,7 +74,7 @@ async function runSync(){if(!db)return;countDirty();if(!syncUrl()||!localStorage
   try{const r=await Sync.syncOnce({db:{raw,put:putRaw},cursor:+localStorage.syncCursor||0,request:b=>api('/api/sync',b,localStorage.syncToken)});
     localStorage.syncCursor=r.cursor;localStorage.syncAt=Date.now();setSync('');if(r.applied){await cleanYandex();await ensureJetlend();await refresh();}}
   catch(e){setSync(navigator.onLine===false||e instanceof TypeError||/load failed|failed to fetch|networkerror/i.test(e.message)?'⚠ офлайн':'⚠ '+e.message);}
-  syncing=false;await countDirty();if(syncAgain){syncAgain=false;runSync();}}
+  syncing=false;await countDirty();if(!syncAgain)await migSplitBal().catch(()=>{});if(syncAgain){syncAgain=false;runSync();}}
 setInterval(runSync,60000);addEventListener('online',runSync);addEventListener('offline',()=>setSync(''));addEventListener('pageshow',runSync);document.addEventListener('visibilitychange',()=>{if(!document.hidden)runSync();});
 function syncSheet(){openSheet(`<b>Синхронизация между устройствами</b><p class="mut">Данные хранятся на телефоне и работают без интернета; при наличии сети изменения отправляются на ваш сервер.</p>
   <label class="mut">Адрес сервера (https)</label><input id="sy_url" placeholder="https://example.ru/money" value="${esc(syncUrl()||'https://money.138-16-160-124.sslip.io')}" autocapitalize="off" autocorrect="off">
@@ -387,6 +396,7 @@ function circMenu(k,id){const it=itemOf(k,id);if(!it)return;const bk=k==='acc'&&
   ${k==='acc'&&(id==='jetlend'||/jet ?lend/i.test(it.name))?`<label class="b s">📄 Загрузить «Экспорт операций» JetLend (XLSX)<input type="file" accept=".xlsx,.xls" hidden onchange="closeSheet();jlImport('${id}',this.files[0])"></label><label class="b s">📷 Снимок главного экрана JetLend<input type="file" accept="image/*" hidden onchange="closeSheet();jlShots('${id}',[...this.files])"></label>`:''}
   ${k==='acc'&&toReview(id).length?`<button class="b" onclick="closeSheet();show('inreview','${id}')">❓ Не разобрано: ${toReview(id).length}</button>`:''}
   <button class="b s" onclick="closeSheet();window._hf={k:'${k}',id:'${id}',m:PER};show('history')">Открыть в Истории</button>
+  ${k==='acc'?`<button class="b s" onclick="corrBal('${id}')">⚖️ Скорректировать остаток</button>`:''}
   <button class="b s" onclick="closeSheet();editCirc('${k}','${id}')">✎ ${k==='acc'?'Изменить счёт / указать остаток':'Изменить'}</button>
   <button class="b s" onclick="closeSheet()">Отмена</button>`);}
 function tapCirc(c){const k=c.dataset.k,id=c.dataset.id;
@@ -536,7 +546,7 @@ function ssToReview(){const rows=ssRows.filter(r=>r.amount&&r.date).map(r=>({...
 // ---- CoinKeeper import ----
 let CK=null;
 const ckSkipped=()=>JSON.parse(localStorage.ckSkipped||'[]');
-const APP_VER='v50';
+const APP_VER='v51';
 let CKB=[];try{CKB=JSON.parse(localStorage.ckBanks||'[]');}catch(e){CKB=[];}
 function ckbStatus(){const el=$('#ckb');if(!el)return;el.innerHTML=CKB.length?'✅ Выписки загружены: '+CKB.map(b=>esc((b.accountId?accName(b.accountId):b.name)+' ('+b.ops.length+' операций)')).join(', ')+' <button class="b s" onclick="CKB=[];localStorage.removeItem(\'ckBanks\');ckbStatus();if(CK){CK=Core.planCoinKeeper(CK.items.map(i=>i.row),{accounts:S.accounts,cats:S.cats,ops:S.ops,skipped:ckSkipped()});CK.items.forEach(i=>{i.accept=i.action===\'add\'||i.action===\'link\'});renderCK();}">Сбросить</button>':'<span class="neg">⚠️ Выписки не загружены — подсказок банка не будет. Сначала нажмите кнопку выше.</span>';}
 async function ckBanks(files){CKB=[];for(const f of files){const r=Core.parseTBank(Core.decode(await f.arrayBuffer()));if(r.ops.length)CKB.push({name:f.name,ops:r.ops});}
