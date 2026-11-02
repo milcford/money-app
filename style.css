@@ -51,3 +51,4 @@ input,select,.b{font-size:17px;padding:10px;border-radius:10px;border:1px solid 
 #rv_end{height:90px}
 
 .c,.c *{-webkit-touch-callout:none;-webkit-user-select:none;user-select:none}
+#sync.off{color:#f5a623!important;font-weight:600}

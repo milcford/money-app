@@ -6,7 +6,7 @@ const tx=(s,m='readonly')=>db.transaction(s,m).objectStore(s);
 const raw=s=>new Promise(ok=>{const r=tx(s).getAll();r.onsuccess=()=>ok(r.result);});
 const all=async s=>(await raw(s)).filter(x=>!x.deleted);
 const putRaw=(s,o)=>new Promise(ok=>{const r=tx(s,'readwrite').put(o);r.onsuccess=ok;});
-const put=(s,o)=>{o.updatedAt=Math.max(Date.now(),(o.updatedAt||0)+1);o._dirty=1;scheduleSync();return putRaw(s,o);};
+const put=(s,o)=>{o.updatedAt=Math.max(Date.now(),(o.updatedAt||0)+1);o._dirty=1;scheduleSync();return putRaw(s,o).then(r=>{countDirty();return r;});};
 const del=(s,id)=>put(s,{id,deleted:true});
 const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,7);
 const byOrder=(a,b)=>(a.order??0)-(b.order??0);
@@ -43,17 +43,20 @@ let syncing=false,syncAgain=false,syncTimer=null,syncMsg='';
 const SAME_ORIGIN=!/github\.io$/.test(location.hostname)&&location.protocol==='https:';
 const syncUrl=()=>(localStorage.syncUrl||(SAME_ORIGIN?location.origin:'')).replace(/\/+$/,'');
 function scheduleSync(){clearTimeout(syncTimer);syncTimer=setTimeout(runSync,1500);}
-function syncLabel(){if(!syncUrl())return '';if(!localStorage.syncToken)return '⚠ войдите в синхронизацию';if(syncMsg)return syncMsg;
+let dirtyN=0;
+async function countDirty(){if(!db)return;let n=0;for(const st of ['accounts','ops','cats'])for(const r of await raw(st))if(r._dirty)n++;dirtyN=n;const e=document.getElementById('sync');if(e){e.textContent=syncLabel();e.classList.toggle('off',!navigator.onLine);}}
+function syncLabel(){const off=navigator.onLine===false,q=dirtyN?(off?' · '+dirtyN+' не отправлено':' ↑'+dirtyN):'';if(off)return '⚠ офлайн'+q;return syncBase()+q;}
+function syncBase(){if(!syncUrl())return '';if(!localStorage.syncToken)return '⚠ войдите в синхронизацию';if(syncMsg)return syncMsg;
   const t=+localStorage.syncAt;return t?'☁ '+new Date(t).toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'}):'☁';}
-function setSync(m){syncMsg=m;const e=document.getElementById('sync');if(e)e.textContent=syncLabel();}
+function setSync(m){syncMsg=m;const e=document.getElementById('sync');if(e){e.textContent=syncLabel();e.classList.toggle('off',navigator.onLine===false);}}
 async function api(path,body,tok){const r=await fetch(syncUrl()+path,{method:'POST',headers:{'content-type':'application/json',...(tok?{authorization:'Bearer '+tok}:{})},body:JSON.stringify(body||{})});
   const j=await r.json().catch(()=>({}));if(r.status===401&&tok){localStorage.removeItem('syncToken');throw new Error('нужно войти заново');}if(!r.ok)throw new Error(j.error||('ошибка '+r.status));return j;}
-async function runSync(){if(!db||!syncUrl()||!localStorage.syncToken)return setSync('');if(syncing){syncAgain=true;return;}syncing=true;setSync('⟳ синхронизация…');
+async function runSync(){if(!db)return;countDirty();if(!syncUrl()||!localStorage.syncToken)return setSync('');if(navigator.onLine===false)return setSync('');if(syncing){syncAgain=true;return;}syncing=true;setSync('⟳ синхронизация…');
   try{const r=await Sync.syncOnce({db:{raw,put:putRaw},cursor:+localStorage.syncCursor||0,request:b=>api('/api/sync',b,localStorage.syncToken)});
     localStorage.syncCursor=r.cursor;localStorage.syncAt=Date.now();setSync('');if(r.applied){await cleanYandex();await ensureJetlend();await refresh();}}
   catch(e){setSync(navigator.onLine===false?'офлайн':'⚠ '+e.message);}
-  syncing=false;if(syncAgain){syncAgain=false;runSync();}}
-setInterval(runSync,60000);addEventListener('online',runSync);document.addEventListener('visibilitychange',()=>{if(!document.hidden)runSync();});
+  syncing=false;await countDirty();if(syncAgain){syncAgain=false;runSync();}}
+setInterval(runSync,60000);addEventListener('online',runSync);addEventListener('offline',()=>setSync(''));addEventListener('pageshow',runSync);document.addEventListener('visibilitychange',()=>{if(!document.hidden)runSync();});
 function syncSheet(){openSheet(`<b>Синхронизация между устройствами</b><p class="mut">Данные хранятся на телефоне и работают без интернета; при наличии сети изменения отправляются на ваш сервер.</p>
   <label class="mut">Адрес сервера (https)</label><input id="sy_url" placeholder="https://example.ru/money" value="${esc(syncUrl()||'https://money.138-16-160-124.sslip.io')}" autocapitalize="off" autocorrect="off">
   ${localStorage.syncToken?`<div class="mut">Вход выполнен. ${esc(syncLabel())}</div><button class="b" onclick="closeSheet();runSync()">Синхронизировать сейчас</button><button class="b r" onclick="syncLogout()">Выйти</button>`:
@@ -113,7 +116,7 @@ function opMatch(k,id){if(k==='inc'){const n=itemOf('inc',id).name;return o=>o.t
   return o=>o.accountId===id||o.toAccountId===id;}
 function opVal(k,id,o){if(k!=='acc')return o.amount;if(o.type==='transfer')return o.toAccountId===id?o.amount:-o.amount;return o.type==='income'?o.amount:-o.amount;}
 function header(){const m=monthSums(PER),b=Core.balances(S.accounts,S.ops);const tot=S.accounts.filter(a=>a.kind!=='savings').reduce((x,a)=>x+(a.credit?Math.max(0,b[a.id]):b[a.id]),0);const debt=S.accounts.filter(a=>a.credit).reduce((x,a)=>x+Math.max(0,-b[a.id]),0);
-  $('#top').innerHTML=`<div class="prof" onclick="renameProfile()">${esc(localStorage.profile||'Мои финансы')} ⌄</div><div id="sync" onclick="syncSheet()" style="position:absolute;right:14px;top:calc(env(safe-area-inset-top) + 12px);font-size:12px;color:#9ab">${esc(syncLabel())}</div>
+  $('#top').innerHTML=`<div class="prof" onclick="renameProfile()">${esc(localStorage.profile||'Мои финансы')} ⌄</div><div id="sync" class="${navigator.onLine===false?'off':''}" onclick="syncSheet()" style="position:absolute;right:14px;top:calc(env(safe-area-inset-top) + 12px);font-size:12px;color:#9ab">${esc(syncLabel())}</div>
   <div class="figs"><div><b>Расходы</b><span>${fmt(m.exp)}</span></div><div onclick="show('recon')" style="cursor:pointer"><b>Баланс</b><span>${fmt(tot)}</span>${debt?`<small style="display:block;color:#e57373;font-size:11px">Долг по кредиткам ${fmt(debt)}</small>`:''}</div><div><b>Доходы</b><span>${fmt(m.inc)}</span></div></div>${perBar()}`;
   const n=S.ops.filter(o=>o.reviewed===false).length,bd=$('#badge');bd.textContent=n;bd.style.display=n?'block':'none';}
 function renameProfile(){const n=prompt('Название',localStorage.profile||'Мои финансы');if(n){localStorage.profile=n;header();}}
@@ -433,7 +436,7 @@ function ssToReview(){const rows=ssRows.filter(r=>r.amount&&r.date).map(r=>({...
 // ---- CoinKeeper import ----
 let CK=null;
 const ckSkipped=()=>JSON.parse(localStorage.ckSkipped||'[]');
-const APP_VER='v34';
+const APP_VER='v35';
 let CKB=[];try{CKB=JSON.parse(localStorage.ckBanks||'[]');}catch(e){CKB=[];}
 function ckbStatus(){const el=$('#ckb');if(!el)return;el.innerHTML=CKB.length?'✅ Выписки загружены: '+CKB.map(b=>esc((b.accountId?accName(b.accountId):b.name)+' ('+b.ops.length+' операций)')).join(', ')+' <button class="b s" onclick="CKB=[];localStorage.removeItem(\'ckBanks\');ckbStatus();if(CK){CK=Core.planCoinKeeper(CK.items.map(i=>i.row),{accounts:S.accounts,cats:S.cats,ops:S.ops,skipped:ckSkipped()});CK.items.forEach(i=>{i.accept=i.action===\'add\'||i.action===\'link\'});renderCK();}">Сбросить</button>':'<span class="neg">⚠️ Выписки не загружены — подсказок банка не будет. Сначала нажмите кнопку выше.</span>';}
 async function ckBanks(files){CKB=[];for(const f of files){const r=Core.parseTBank(Core.decode(await f.arrayBuffer()));if(r.ops.length)CKB.push({name:f.name,ops:r.ops});}
