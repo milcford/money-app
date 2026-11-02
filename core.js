@@ -245,7 +245,7 @@ function reconcile(imported, existing, cardAcc, cashAcc, ownAcc, pairAcc, others
       .sort((a,b)=>days(a.date,op.date)-days(b.date,op.date));
     if(cand.length){used.add(cand[0].id);out.push({op,action:'link',target:cand[0].id});continue;}
     // account rule «Входящие = доход»: every incoming op is income (no transfer guessing), user picks Доход/Прочее
-    if(incomeIn&&dir==='in'){out.push({op,action:'add',type:'income',inc:true,cat:'Доход'});continue;}
+    if(incomeIn&&dir==='in'){out.push({op,action:'add',type:'income',inc:true,cat:(opts&&opts.inCat)||'Доход'});continue;}
     // transfer between own T-Bank accounts: link to the other side already recorded (e.g. converted CoinKeeper row), else new transfer
     if(OWN.test(op.desc||'')){const t=existing.find(o=>!used.has(o.id)&&o.type==='transfer'&&Math.abs(o.amount-abs)<0.005&&days(o.date.slice(0,10),op.date.slice(0,10))<=1&&
         (dir==='out'?o.accountId===cardAcc:o.toAccountId===cardAcc)&&!(o.sides||[]).includes(cardAcc));
