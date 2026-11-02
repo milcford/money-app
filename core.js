@@ -266,14 +266,15 @@ function findDupTransfer(ops,t,skip){const a=Math.abs(+t.amount);if(!t.accountId
 const SPLIT=/(сплит|split|погашени[ея] рассрочк|рассрочк)/i,SPLIT_PAY=/(супер сплит|общий плат|погаш|платеж|платёж|оплата (части|рассрочк|сплит)|внесени)/i;
 function reconcile(imported, existing, cardAcc, cashAcc, ownAcc, pairAcc, others, opts){
   const incomeIn=!!(opts&&opts.incomeIn);
-  const known=new Set(); existing.forEach(o=>(o.bankIds||[]).forEach(b=>known.add(b)));
+  const known=new Map(); existing.forEach(o=>(o.bankIds||[]).forEach(b=>known.set(b,o)));
   const used=new Set(); const out=[];
+  imported.forEach(op=>{const k=known.get(op.bankId);if(k)used.add(k.id);});
   for(const op of imported){
     if(known.has(op.bankId)){out.push({op,action:'duplicate'});continue;}
     const abs=Math.abs(op.amount), dir=op.amount<0?'out':'in';
     const isSS=String(op.bankId).startsWith('s:');
     // cross-source overlap: screenshot row vs CSV-imported op (or the reverse): same account, amount, date ±1 day, similar description
-    const ov=existing.find(o=>!used.has(o.id)&&(o.bankIds||[]).some(b=>!String(b).startsWith('ck:'))&&(o.bankIds||[]).every(b=>String(b).startsWith('s:')!==isSS)&&
+    const ov=existing.find(o=>!used.has(o.id)&&(o.bankIds||[]).some(b=>!String(b).startsWith('ck:'))&&((o.bankIds||[]).every(b=>String(b).startsWith('s:')!==isSS)||isSS&&o.type!=='transfer')&&
       Math.abs(o.amount-abs)<0.005&&days(o.date.slice(0,10),op.date.slice(0,10))<=1&&
       (o.accountId===cardAcc||o.toAccountId===cardAcc)&&(similar(o.note,op.desc)||o.type==='transfer'&&isCash(op)));
     if(ov){used.add(ov.id);out.push({op,action:'link',target:ov.id,overlap:true});continue;}
@@ -423,7 +424,17 @@ function needsInReview(o,ids){if(o.deleted||o.review===0)return false;const bank
 // manual amount entry: «13000», «13 000», «1 234,56», «1234.56», «13 000 ₽» -> number (NaN if none)
 function parseAmount(s){let t=String(s==null?'':s).replace(/[\s\u00a0\u202f']/g,'').replace(/(₽|руб\.?|р\.?)$/i,'').replace(/[−–—]/g,'-');
   if(/,/.test(t)&&/\./.test(t))t=t.replace(/\./g,'');t=t.replace(',','.');if(!/^-?\d*\.?\d+$|^-?\d+\.$/.test(t))return NaN;return Math.abs(parseFloat(t));}
-root.Core={parseAmount,parseSplitText,mergeSplitShots,SPLIT,SPLIT_PAY,findDupTransfer,PERSON,p2pMislink,splitP2P,needsInReview,parseJetlendMain,planJetlendSnap,JL,jlDate,parseJetlend,planJetlend,moveOp,opCmp,shotTimes,cleanYandexDesc,parseYandexText,ownToTransfer,OWN,INB,suggestCoinKeeper,guessBankAccount,bankKind,parseCoinKeeper,planCoinKeeper,decideOp,parseScreenshotText,screenshotIds,similar,decode,parseTBank,reconcile,balances,hash,isCash};
+// duplicates on an account from screenshot imports: [{keep,drop:[],bankIds}] — manual ops / bank-statement ops are never touched
+function splitDupPlan(ops,acc){const g=new Map();
+  for(const o of ops){if(o.deleted||!(o.accountId===acc||o.toAccountId===acc))continue;const b=o.bankIds||[];if(!b.length||!b.every(x=>String(x).startsWith('s:')))continue;
+    const k=[String(o.date).slice(0,10),(+o.amount).toFixed(2),o.type,o.accountId,o.toAccountId||'',norm(o.note)].join('|');(g.get(k)||g.set(k,[]).get(k)).push(o);}
+  const out=[];for(const xs of g.values()){if(xs.length<2)continue;
+    xs.sort((a,b)=>(b.bankIds.length-a.bankIds.length)||((b.reviewed!==false)-(a.reviewed!==false))||((a.updatedAt||0)-(b.updatedAt||0)));
+    // screenshot ids are hash(row#n-th copy in its shot): distinct ids in a group = how many copies one screenshot really showed -> keep one op per id
+    const cov=new Set(),keep=[],drop=[];for(const o of xs){if(o.bankIds.some(b=>!cov.has(b))){keep.push(o);o.bankIds.forEach(b=>cov.add(b));}else drop.push(o);}
+    if(drop.length)out.push({keep:keep[0],keeps:keep,drop,bankIds:keep[0].bankIds});}
+  return out;}
+root.Core={splitDupPlan,parseAmount,parseSplitText,mergeSplitShots,SPLIT,SPLIT_PAY,findDupTransfer,PERSON,p2pMislink,splitP2P,needsInReview,parseJetlendMain,planJetlendSnap,JL,jlDate,parseJetlend,planJetlend,moveOp,opCmp,shotTimes,cleanYandexDesc,parseYandexText,ownToTransfer,OWN,INB,suggestCoinKeeper,guessBankAccount,bankKind,parseCoinKeeper,planCoinKeeper,decideOp,parseScreenshotText,screenshotIds,similar,decode,parseTBank,reconcile,balances,hash,isCash};
 if(typeof module!=='undefined')module.exports=root.Core;
 })(typeof self!=='undefined'?self:globalThis);
 
