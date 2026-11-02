@@ -389,7 +389,7 @@ function cardAccFor(card,bank){if(FIX)return FIX;const d=String(card).replace(/\
   return (d&&cards.find(a=>a.cardMask&&String(a.cardMask).replace(/\D/g,'').slice(-4)===d)||cards.find(a=>a.id===($('#csv_acc')||{}).value)||cards[0]).id;}
 function guessCat(op){if(op.amount>0){const inc=S.cats.filter(c=>c.income);return (inc.find(c=>c.name==='Прочее')||inc[inc.length-1]||{name:'Прочее'}).name;}
   const ex=S.cats.filter(c=>!c.income),t=(op.bankCategory+' '+op.desc).toLowerCase();const m=ex.find(c=>t.includes(c.name.toLowerCase()));if(m)return m.name;
-  const map=[[/супермаркет|продукт/,'Продукты'],[/ресторан|кафе|фастфуд/,'Еда вне дома'],[/транспорт|такси|метро|топливо|азс/,'Транспорт'],[/развлеч|кино/,'Развлечения'],[/одежд|маркетплейс|ozon|wildberries/,'Покупки'],[/красот|парикмах/,'парикмахерская'],[/ремонт|дом/,'Ремонт']];
+  const map=[[/супермаркет|продукт/,'Продукты'],[/ресторан|кафе|фастфуд/,'Еда вне дома'],[/транспорт|такси|метро|топливо|азс|азк|заправ|zapravki/,'Транспорт'],[/электрон|бытовая техника|различные товары|спорт/,'Покупки'],[/развлеч|кино/,'Развлечения'],[/одежд|маркетплейс|ozon|wildberries/,'Покупки'],[/красот|парикмах/,'парикмахерская'],[/ремонт|дом/,'Ремонт']];
   for(const[r,n]of map)if(r.test(t)&&ex.find(c=>c.name===n))return n;return (ex.find(c=>c.name==='Прочее')||ex[0]||{name:'Прочее'}).name;}
 let pending=[];
 async function pdfLines(file){toast('Читаю PDF…');const pdfjs=await import('https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.min.mjs');
@@ -495,7 +495,8 @@ async function applyJLS(){const id=JLS.id,P=jlPlan(),a=S.accounts.find(x=>x.id==
 // ---- screenshot import (client-side OCR) ----
 let ssRows=[],ssAcc='tbank';
 function loadTesseract(){return window.Tesseract?Promise.resolve():new Promise((ok,no)=>{const sc=document.createElement('script');sc.src='https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';sc.onload=ok;sc.onerror=()=>no(new Error('Не удалось загрузить модуль распознавания (нужен интернет при первом запуске)'));document.head.appendChild(sc);});}
-async function prep(file){const img=await createImageBitmap(file);const c=document.createElement('canvas');c.width=img.width;c.height=img.height;const x=c.getContext('2d');x.drawImage(img,0,0);
+// v48: upscale ×2 (max 2400 px wide): small «,18» kopecks survive OCR
+async function prep(file){const img=await createImageBitmap(file);const k=Math.max(1,Math.min(2,2400/img.width));const c=document.createElement('canvas');c.width=Math.round(img.width*k);c.height=Math.round(img.height*k);const x=c.getContext('2d');x.imageSmoothingQuality='high';x.drawImage(img,0,0,c.width,c.height);
   const d=x.getImageData(0,0,c.width,c.height),p=d.data;let sum=0;for(let i=0;i<p.length;i+=4){const g=.3*p[i]+.59*p[i+1]+.11*p[i+2];p[i]=p[i+1]=p[i+2]=g;sum+=g;}
   if(sum/(p.length/4)<128)for(let i=0;i<p.length;i+=4){p[i]=p[i+1]=p[i+2]=255-p[i];} // dark theme -> invert
   x.putImageData(d,0,0);return c;}
@@ -503,7 +504,9 @@ async function doShots(files){ssAcc=$('#ss_acc').value;const pr=$('#ss_prog');ss
   try{pr.textContent='Загружаю распознавание…';await loadTesseract();
     const w=await Tesseract.createWorker(['rus','eng'],1,{logger:m=>{if(m.status==='recognizing text')pr.textContent=`Распознаю… ${Math.round(m.progress*100)}%`;}});
     for(let i=0;i<files.length;i++){pr.textContent=`Скриншот ${i+1} из ${files.length}…`;const {data}=await w.recognize(await prep(files[i]));window._lastOCR=data.text;
-      Core.parseScreenshotText(data.text).forEach(o=>ssRows.push({date:o.date.slice(0,10),amount:o.amount,desc:o.desc,cat:o.bankCategory,shot:i}));}
+      if(ssAcc==='ya_split')Core.parseSplitText(data.text).forEach(o=>ssRows.push({date:o.date.slice(0,10),amount:o.amount,desc:o.kind==='refund'?'Возврат: '+o.desc:o.desc,cat:o.bankCategory,kind:o.kind,shot:i}));
+      else Core.parseScreenshotText(data.text).forEach(o=>ssRows.push({date:o.date.slice(0,10),amount:o.amount,desc:o.desc,cat:o.bankCategory,shot:i}));}
+    if(ssAcc==='ya_split')ssRows=Core.mergeSplitShots(ssRows);
     await w.terminate();pr.textContent=`Найдено строк: ${ssRows.length}. Проверьте и поправьте ниже.`;renderSS();
   }catch(e){pr.textContent='Ошибка: '+e.message;}}
 function renderSS(){$('#ssedit').innerHTML=`<div class="card"><b>Распознанные операции</b><div class="mut">Исправьте дату, сумму (минус — расход) или описание; ✕ удаляет строку.</div>
@@ -521,7 +524,7 @@ function ssToReview(){const rows=ssRows.filter(r=>r.amount&&r.date).map(r=>({...
 // ---- CoinKeeper import ----
 let CK=null;
 const ckSkipped=()=>JSON.parse(localStorage.ckSkipped||'[]');
-const APP_VER='v47';
+const APP_VER='v48';
 let CKB=[];try{CKB=JSON.parse(localStorage.ckBanks||'[]');}catch(e){CKB=[];}
 function ckbStatus(){const el=$('#ckb');if(!el)return;el.innerHTML=CKB.length?'✅ Выписки загружены: '+CKB.map(b=>esc((b.accountId?accName(b.accountId):b.name)+' ('+b.ops.length+' операций)')).join(', ')+' <button class="b s" onclick="CKB=[];localStorage.removeItem(\'ckBanks\');ckbStatus();if(CK){CK=Core.planCoinKeeper(CK.items.map(i=>i.row),{accounts:S.accounts,cats:S.cats,ops:S.ops,skipped:ckSkipped()});CK.items.forEach(i=>{i.accept=i.action===\'add\'||i.action===\'link\'});renderCK();}">Сбросить</button>':'<span class="neg">⚠️ Выписки не загружены — подсказок банка не будет. Сначала нажмите кнопку выше.</span>';}
 async function ckBanks(files){CKB=[];for(const f of files){const r=Core.parseTBank(Core.decode(await f.arrayBuffer()));if(r.ops.length)CKB.push({name:f.name,ops:r.ops});}

@@ -1,5 +1,5 @@
 // Учёт денег — service worker: offline shell, stale-while-revalidate. Bump CACHE on every app change.
-const CACHE='money-v47';
+const CACHE='money-v48';
 const SHELL=['./','index.html','app.js','core.js','sync.js','style.css','icon.svg','manifest.json'];
 const CDN=['https://cdn.sheetjs.com/xlsx-0.20.3/package/xlsx.mjs'];
 const INDEX=new URL('index.html',self.registration.scope).href, ROOT=self.registration.scope;

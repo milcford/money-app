@@ -92,6 +92,42 @@ function parseScreenshotText(text,today=new Date()){
     else pendingDesc=line;
   }
   ops.forEach(o=>delete o._fresh);return ops;}
+
+// ---------- Яндекс Пэй «Операции» (Сплит) screenshot OCR ----------
+// rows: «Merchant  −274,18 ₽» then a subtitle line (category / «Возврат» / «Общий платеж»). Red «!» after the amount (OCR: © @ Q) = failed payment -> skipped.
+const SPL_AMT=/([−\-–—‒+~])?\s*(\d{1,3}(?:[ \u00a0\u202f][\dОOЗ]{3})+|\d+)(?:\s*[.,/]\s*(\d{1,2}))?\s*(₽|руб\.?|[РPр#£¥€]+|¥P)?\s*([©@®Q!]|\(!\))?\s*$/;
+function parseSplitText(text,today=new Date()){const ops=[];let date=null,cur=null;
+  // icon junk OCR puts before the merchant: «CA», «on», «©», «=», «9.», «‘WB», «oF 4»; keeps «ИП», «АЗК»
+  const junkTok=(t,n)=>t.length<=3&&(/[^0-9A-Za-zА-Яа-яЁё]/.test(t)||/^[A-Za-z]{1,2}$/.test(t)||/^[а-яё]+$/.test(t)||/^\d$/.test(t)||/^[А-Яа-яЁё]{1,2}$/.test(t)&&/^[A-Za-z]{3}/.test(n||''));
+  const junkLead=s=>{const w=s.trim().split(/\s+/);while(w.length>1&&junkTok(w[0],w[1]))w.shift();return w.join(' ').replace(/[\s~—–-]+$/,'').trim();};
+  for(const raw of String(text).split(/\r?\n/)){const line=raw.replace(/[|]/g,' ').replace(/\s+/g,' ').trim();if(!line)continue;
+    const h=parseHeader(line,today);if(h){date=h;cur=null;continue;}
+    if(!date)continue;
+    const m=line.match(SPL_AMT);const head=m?line.slice(0,m.index):'';
+    if(m&&m[1]&&/[A-Za-zА-Яа-яЁё]{2}/.test(head)){
+      const intp=m[2].replace(/[ОO]/g,'0').replace(/З/g,'3').replace(/\D/g,'');let v=+(intp+(m[3]?'.'+m[3]:''));if(!v){cur=null;continue;}
+      // Yandex prints ≥10 000 with a thousands space («18 701»): 5+ digits glued together = the decimal comma was lost («27418» = 274,18)
+      let guess=false;if(!m[3]&&/^\d{5,}$/.test(m[2])){v=+(intp.slice(0,-2)+'.'+intp.slice(-2));guess=true;}
+      if(m[1]!=='+')v=-v;const desc=junkLead(head);
+      cur={date:date+'T00:00:00',amount:v,desc,bankCategory:'',failed:!!m[5],card:'',src:'split',guess};
+      if(/карта п[эе]й.*супер|супер с[пn]л/i.test(line)){cur.kind='repay';cur.desc='Карта Пэй → Супер Сплит';}
+      ops.push(cur);continue;}
+    if(cur&&!cur.bankCategory){const sub=junkLead(line);cur.bankCategory=sub;
+      if(/общий плат/i.test(sub))cur.kind='repay';else if(/^возврат/i.test(sub)&&cur.amount>0)cur.kind='refund';cur=null;}}
+  return ops.filter(o=>!o.failed).map(o=>{const r={...o,kind:o.kind||(o.amount>0?'refund':'purchase')};delete r.failed;if(r.kind==='repay')r.amount=Math.abs(r.amount);return r;});}
+// overlapping Split screenshots: the same row in two shots may lose the decimal comma in one of them (27418 vs 274,18) -> keep the version with kopecks
+function mergeSplitShots(rows){const out=[];const dig=v=>Math.abs(v).toFixed(2).replace(/\.00$/,'').replace('.','');
+  // one inserted digit (8540 vs 86540)
+  const ins=(a,b)=>{if(a.length+1!==b.length)return false;for(let i=0;i<b.length;i++)if(b.slice(0,i)+b.slice(i+1)===a)return true;return false;};
+  const same=(x,r)=>x.amount===r.amount||dig(x.amount)===dig(r.amount)||ins(dig(x.amount),dig(r.amount))||ins(dig(r.amount),dig(x.amount));
+  const better=(x,r)=>{if(!!x.guess!==!!r.guess)return x.guess?r.amount:x.amount;const kx=!Number.isInteger(x.amount),kr=!Number.isInteger(r.amount);if(kx!==kr)return kr?r.amount:x.amount;return dig(x.amount).length<=dig(r.amount).length?x.amount:r.amount;};
+  const byShot={};rows.forEach(r=>(byShot[r.shot]=byShot[r.shot]||[]).push(r));
+  for(const sh of Object.keys(byShot)){const used=new Set();
+    for(const r of byShot[sh]){const cand=out.map((x,i)=>[x,i]).filter(([x,i])=>!used.has(i)&&x._shots.indexOf(r.shot)<0&&x.date===r.date&&x.kind===r.kind&&Math.sign(x.amount)===Math.sign(r.amount)&&same(x,r)&&(x.amount===r.amount||similar(x.desc,r.desc)));
+      const exact=cand.find(([x])=>x.amount===r.amount&&similar(x.desc,r.desc))||cand.find(([x])=>x.amount===r.amount)||cand[0];
+      if(exact){const [x,i]=exact;used.add(i);x.amount=better(x,r);if(x.amount===r.amount)x.guess=r.guess;x._shots.push(r.shot);if(r.bankCategory&&!x.bankCategory)x.bankCategory=r.bankCategory;continue;}
+      out.push({...r,_shots:[r.shot]});used.add(out.length-1);}}
+  return out.map(x=>{const y={...x};delete y._shots;delete y.guess;return y;});}
 // assign stable ids; rows: [{date,amount,desc,shot}]. Identical rows from different screenshots (overlap) collapse; within one shot they stay separate.
 function screenshotIds(rows){const cnt={},out=[],seen=new Set();
   for(const r of rows){const base=['s',r.date.slice(0,10),(+r.amount).toFixed(2),norm(r.desc)].join('|');const k=r.shot+'~'+base;cnt[k]=(cnt[k]||0)+1;
@@ -227,7 +263,7 @@ function findDupTransfer(ops,t,skip){const a=Math.abs(+t.amount);if(!t.accountId
   return (ops||[]).find(o=>o&&!o.deleted&&o.type==='transfer'&&o.id!==t.id&&!(skip&&skip.has(o.id))&&Math.abs(o.amount-a)<0.005&&
     ((o.accountId===t.accountId&&o.toAccountId===t.toAccountId)||(o.accountId===t.toAccountId&&o.toAccountId===t.accountId))&&
     days(String(o.date).slice(0,10),String(t.date).slice(0,10))<=1)||null;}
-const SPLIT=/(сплит|split|погашени[ея] рассрочк|рассрочк)/i,SPLIT_PAY=/(погаш|платеж|платёж|оплата (части|рассрочк|сплит)|внесени)/i;
+const SPLIT=/(сплит|split|погашени[ея] рассрочк|рассрочк)/i,SPLIT_PAY=/(супер сплит|общий плат|погаш|платеж|платёж|оплата (части|рассрочк|сплит)|внесени)/i;
 function reconcile(imported, existing, cardAcc, cashAcc, ownAcc, pairAcc, others, opts){
   const incomeIn=!!(opts&&opts.incomeIn);
   const known=new Set(); existing.forEach(o=>(o.bankIds||[]).forEach(b=>known.add(b)));
@@ -384,7 +420,7 @@ function parseYandexText(lines){const D=/(\d{2})\.(\d{2})\.(\d{4})/,AM=/([+\-−
 function needsInReview(o,ids){if(o.deleted||o.review===0)return false;const bank=(o.bankIds||[]).some(b=>!String(b).startsWith('ck:'));
   if(o.type==='transfer')return ids.includes(o.toAccountId)&&!ids.includes(o.accountId)&&bank;
   if(o.type==='income')return ids.includes(o.accountId)&&!o.category;return false;}
-root.Core={SPLIT,SPLIT_PAY,findDupTransfer,PERSON,p2pMislink,splitP2P,needsInReview,parseJetlendMain,planJetlendSnap,JL,jlDate,parseJetlend,planJetlend,moveOp,opCmp,shotTimes,cleanYandexDesc,parseYandexText,ownToTransfer,OWN,INB,suggestCoinKeeper,guessBankAccount,bankKind,parseCoinKeeper,planCoinKeeper,decideOp,parseScreenshotText,screenshotIds,similar,decode,parseTBank,reconcile,balances,hash,isCash};
+root.Core={parseSplitText,mergeSplitShots,SPLIT,SPLIT_PAY,findDupTransfer,PERSON,p2pMislink,splitP2P,needsInReview,parseJetlendMain,planJetlendSnap,JL,jlDate,parseJetlend,planJetlend,moveOp,opCmp,shotTimes,cleanYandexDesc,parseYandexText,ownToTransfer,OWN,INB,suggestCoinKeeper,guessBankAccount,bankKind,parseCoinKeeper,planCoinKeeper,decideOp,parseScreenshotText,screenshotIds,similar,decode,parseTBank,reconcile,balances,hash,isCash};
 if(typeof module!=='undefined')module.exports=root.Core;
 })(typeof self!=='undefined'?self:globalThis);
 
