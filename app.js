@@ -233,6 +233,10 @@ async function saveOp(){const a=parseFloat(String(E.amount).replace(',','.'));if
   if(E.type==='transfer'&&E.accountId===E.toAccountId)return toast('Счета должны различаться');
   const old=S.ops.find(o=>o.id===E.id)||{};
   const o={...old,id:E.id||uid(),type:E.type,amount:a,accountId:E.accountId,toAccountId:E.type==='transfer'?E.toAccountId:undefined,date:E.date,category:E.type==='transfer'?'':E.category,note:E.note,comment:(E.comment||'').trim()||undefined,bankIds:old.bankIds||[],reviewed:true};
+  if(o.type==='transfer'){const d=Core.findDupTransfer(S.ops,o);
+    if(d&&confirm(`Такой перевод уже есть (${String(d.date).slice(0,10)}, ${d.note||accName(d.accountId)+' → '+accName(d.toAccountId)}). Удалить эту как дубль?\n\nОК — удалить эту, Отмена — оставить обе.`)){
+      if(old.id){const ids=(old.bankIds||[]).filter(b=>!(d.bankIds||[]).includes(b));if(ids.length){d.bankIds=[...(d.bankIds||[]),...ids];await put('ops',d);}await del('ops',old.id);}
+      closeSheet();refresh();toast('Дубль удалён');return;}}
   await put('ops',o);closeSheet();refresh();toast('Сохранено');}
 async function delOp(id){if(!confirm('Удалить операцию?'))return;await del('ops',id);closeSheet();refresh();}
 async function editOp(id){const o=S.ops.find(x=>x.id===id);if(o.reviewed===false){o.reviewed=true;await put('ops',o);header();}opSheet({...o});}
@@ -393,7 +397,9 @@ async function applyImport(){let n=0;const bals={};(IMP.accs||[]).forEach(id=>{c
   if(p.action==='transfer'&&p.accept)for(const x of [p.from,p.to]){const c=S.accounts.find(a=>a.id===x);if(!c){const card=S.accounts.find(a=>blackFor(a.id)&&blackFor(a.id).id===x);if(card)await ensureAcc(blackFor(card.id));}}
   if(p.action==='link'&&p.accept){const t=S.ops.find(o=>o.id===p.target);t.bankIds=[...(t.bankIds||[]),op.bankId];if(p.side)t.sides=[...(t.sides||[]),p.side];await put('ops',t);n++;continue;}
   let o={id:uid(),amount:Math.abs(op.amount),date:op.date,note:op.desc,bankIds:[op.bankId],reviewed:false};
-  if(p.action==='transfer'&&p.accept)o={...o,type:'transfer',accountId:p.from,toAccountId:p.to,category:''};
+  if(p.action==='transfer'&&p.accept){const d=Core.findDupTransfer(S.ops,{amount:op.amount,accountId:p.from,toAccountId:p.to,date:op.date});
+    if(d){if(!(d.bankIds||[]).includes(op.bankId)){d.bankIds=[...(d.bankIds||[]),op.bankId];await put('ops',d);}n++;continue;}
+    o={...o,type:'transfer',accountId:p.from,toAccountId:p.to,category:''};}
   else if(p.action==='link'&&!p.accept||p.action==='transfer'&&!p.accept||p.action==='convert'&&!p.accept||p.action==='add'&&p.accept)o={...o,type:op.amount<0?'expense':'income',accountId:p.card,category:p.cat||guessCat(op)};
   else continue;await put('ops',o);n++;}
   S.ops=await all('ops');
@@ -478,7 +484,7 @@ function ssToReview(){const rows=ssRows.filter(r=>r.amount&&r.date).map(r=>({...
 // ---- CoinKeeper import ----
 let CK=null;
 const ckSkipped=()=>JSON.parse(localStorage.ckSkipped||'[]');
-const APP_VER='v41';
+const APP_VER='v42';
 let CKB=[];try{CKB=JSON.parse(localStorage.ckBanks||'[]');}catch(e){CKB=[];}
 function ckbStatus(){const el=$('#ckb');if(!el)return;el.innerHTML=CKB.length?'✅ Выписки загружены: '+CKB.map(b=>esc((b.accountId?accName(b.accountId):b.name)+' ('+b.ops.length+' операций)')).join(', ')+' <button class="b s" onclick="CKB=[];localStorage.removeItem(\'ckBanks\');ckbStatus();if(CK){CK=Core.planCoinKeeper(CK.items.map(i=>i.row),{accounts:S.accounts,cats:S.cats,ops:S.ops,skipped:ckSkipped()});CK.items.forEach(i=>{i.accept=i.action===\'add\'||i.action===\'link\'});renderCK();}">Сбросить</button>':'<span class="neg">⚠️ Выписки не загружены — подсказок банка не будет. Сначала нажмите кнопку выше.</span>';}
 async function ckBanks(files){CKB=[];for(const f of files){const r=Core.parseTBank(Core.decode(await f.arrayBuffer()));if(r.ops.length)CKB.push({name:f.name,ops:r.ops});}

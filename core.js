@@ -220,6 +220,11 @@ function splitP2P(o,fromAcc,toAcc){const ids=(o.bankIds||[]);const last=ids[ids.
   const out={...o,type:'expense',accountId:fromAcc,toAccountId:undefined,category:'Прочее',sides:undefined,bankIds:ids.slice(0,-1),reviewed:false,review:0};
   const inc={id:o.id+'_in',type:'income',amount:o.amount,accountId:toAcc,date:o.date,note:'Входящий перевод',category:'',bankIds:[last],reviewed:false,review:1};
   return [out,inc];}
+// existing transfer between the same two accounts (either direction), same amount, date ±1 day
+function findDupTransfer(ops,t,skip){const a=Math.abs(+t.amount);if(!t.accountId||!t.toAccountId)return null;
+  return (ops||[]).find(o=>o&&!o.deleted&&o.type==='transfer'&&o.id!==t.id&&!(skip&&skip.has(o.id))&&Math.abs(o.amount-a)<0.005&&
+    ((o.accountId===t.accountId&&o.toAccountId===t.toAccountId)||(o.accountId===t.toAccountId&&o.toAccountId===t.accountId))&&
+    days(String(o.date).slice(0,10),String(t.date).slice(0,10))<=1)||null;}
 function reconcile(imported, existing, cardAcc, cashAcc, ownAcc, pairAcc, others, opts){
   const incomeIn=!!(opts&&opts.incomeIn);
   const known=new Set(); existing.forEach(o=>(o.bankIds||[]).forEach(b=>known.add(b)));
@@ -266,6 +271,8 @@ function reconcile(imported, existing, cardAcc, cashAcc, ownAcc, pairAcc, others
     else if(c==='out') out.push({op,action:'transfer',from:cardAcc,to:cashAcc});
     else out.push({op,action:'add',type:dir==='out'?'expense':'income'});
   }
+  for(const it of out)if(it.action==='transfer'&&it.from&&it.to){const d=findDupTransfer(existing,{amount:it.op.amount,accountId:it.from,toAccountId:it.to,date:it.op.date},used);
+    if(d){used.add(d.id);Object.assign(it,{action:'link',target:d.id,dupTransfer:true,side:cardAcc});}}
   return out;
 }
 // already-stored «между своими счетами» income/expense on cardAcc -> transfer with ownAcc (same id/date/amount)
@@ -370,7 +377,7 @@ function parseYandexText(lines){const D=/(\d{2})\.(\d{2})\.(\d{4})/,AM=/([+\-−
 function needsInReview(o,ids){if(o.deleted||o.review===0)return false;const bank=(o.bankIds||[]).some(b=>!String(b).startsWith('ck:'));
   if(o.type==='transfer')return ids.includes(o.toAccountId)&&!ids.includes(o.accountId)&&bank;
   if(o.type==='income')return ids.includes(o.accountId)&&!o.category;return false;}
-root.Core={PERSON,p2pMislink,splitP2P,needsInReview,parseJetlendMain,planJetlendSnap,JL,jlDate,parseJetlend,planJetlend,moveOp,opCmp,shotTimes,cleanYandexDesc,parseYandexText,ownToTransfer,OWN,INB,suggestCoinKeeper,guessBankAccount,bankKind,parseCoinKeeper,planCoinKeeper,decideOp,parseScreenshotText,screenshotIds,similar,decode,parseTBank,reconcile,balances,hash,isCash};
+root.Core={findDupTransfer,PERSON,p2pMislink,splitP2P,needsInReview,parseJetlendMain,planJetlendSnap,JL,jlDate,parseJetlend,planJetlend,moveOp,opCmp,shotTimes,cleanYandexDesc,parseYandexText,ownToTransfer,OWN,INB,suggestCoinKeeper,guessBankAccount,bankKind,parseCoinKeeper,planCoinKeeper,decideOp,parseScreenshotText,screenshotIds,similar,decode,parseTBank,reconcile,balances,hash,isCash};
 if(typeof module!=='undefined')module.exports=root.Core;
 })(typeof self!=='undefined'?self:globalThis);
 
