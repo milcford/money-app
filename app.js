@@ -187,7 +187,7 @@ function opIcon(o){if(o.type==='transfer'){const a=S.accounts.find(x=>x.id===o.t
   const c=S.cats.find(x=>x.name===o.category&&x.income===(o.type==='income'))||{};return [c.icon||'•',o.type==='income'?COLORS.inc:COLORS.exp];}
 function hrow(o){const[ic,col]=opIcon(o);const t=o.type==='transfer'?`${accName(o.accountId)} → ${accName(o.toAccountId)}`:o.category||'Без категории';
   const sub=o.type==='transfer'?'Перевод':o.type==='income'?`→ ${accName(o.accountId)}`:accName(o.accountId);
-  return `<div class="hrow ${o.reviewed===false?'new':''}" onclick="editOp('${o.id}')"><div class="mini" style="background:${col}">${esc(ic)}</div>
+  return `<div class="hrow ${o.reviewed===false?'new':''}" data-id="${o.id}" onclick="editOp('${o.id}')"><div class="mini" style="background:${col}">${esc(ic)}</div>
   <div class="t"><div>${esc(t)}</div><div class="mut">${esc(sub)}${o.note?' · '+esc(o.note):''} ${(o.bankIds||[]).some(b=>!String(b).startsWith('ck:'))?'<span class="tag">банк</span>':''}${o.review===1?' <span class="tag q">❓ разобрать</span>':''}</div>${o.comment?`<div class="mut com">💬 ${esc(o.comment)}</div>`:''}</div>
   <b class="${o.type==='expense'?'neg':o.type==='income'?'pos':''}">${o.type==='expense'?'−':o.type==='income'?'+':''}${fmt(o.amount)}</b></div>`;}
 async function markAll(){for(const o of S.ops)if(o.reviewed===false){o.reviewed=true;await put('ops',o);}refresh();}
@@ -226,7 +226,7 @@ function opType(k){if(k===E.type)return;const other=id=>(S.accounts.find(a=>a.id
 async function moveOpUI(dir){const list=(LASTLIST.some(o=>o.id===E.id)?LASTLIST:S.ops).map(o=>S.ops.find(x=>x.id===o.id)||o);
   const ch=Core.moveOp(list,E.id,dir);if(!ch.length)return toast(dir<0?'Уже первая за день':'Уже последняя за день');
   for(const o of ch){const cur=S.ops.find(x=>x.id===o.id);Object.assign(cur,{date:o.date});await put('ops',{...cur});if(o.id===E.id)E.date=o.date;}
-  S.ops=await all('ops');refreshView();toast(dir<0?'Поднято':'Опущено');}
+  S.ops=await all('ops');LASTEDIT=E.id;keepPlace(refreshView);toast(dir<0?'Поднято':'Опущено');}
 function key(k){let a=E.amount||'';if(k==='⌫')a=a.slice(0,-1);else if(k===','){if(!a.includes(','))a=(a||'0')+',';}else if(!/,\d\d$/.test(a))a=a==='0'?k:a+k;E.amount=a;$('#disp').textContent=(a||'0')+' ₽';}
 async function saveOp(){const a=parseFloat(String(E.amount).replace(',','.'));if(!(a>0))return toast('Введите сумму');
   if(E.type==='transfer'&&(!E.toAccountId||!E.accountId))return toast('Выберите оба счёта');
@@ -239,8 +239,18 @@ async function saveOp(){const a=parseFloat(String(E.amount).replace(',','.'));if
       closeSheet();refresh();toast('Дубль удалён');return;}}
   await put('ops',o);closeSheet();refresh();toast('Сохранено');}
 async function delOp(id){if(!confirm('Удалить операцию?'))return;await del('ops',id);closeSheet();refresh();}
-async function editOp(id){const o=S.ops.find(x=>x.id===id);if(o.reviewed===false){o.reviewed=true;await put('ops',o);header();}opSheet({...o});}
-async function refresh(){S.ops=await all('ops');S.accounts=(await all('accounts')).sort(byOrder);S.cats=(await all('cats')).sort(byOrder);show(cur);}
+async function editOp(id){LASTEDIT=id;const o=S.ops.find(x=>x.id===id);if(o.reviewed===false){o.reviewed=true;await put('ops',o);header();}opSheet({...o});}
+async function refresh(){S.ops=await all('ops');S.accounts=(await all('accounts')).sort(byOrder);S.cats=(await all('cats')).sort(byOrder);keepPlace(refreshView);}
+// redraw current view but keep loaded feed size and scroll position (anchored on edited or first visible row)
+let LASTEDIT=null;
+function keepPlace(fn){const rows=[...document.querySelectorAll('#view .hrow[data-id], .hrow[data-id]')];let a=null;
+  const vis=el=>{const r=el.getBoundingClientRect();return r.bottom>0&&r.top<innerHeight;};
+  if(LASTEDIT)a=rows.find(el=>el.dataset.id===LASTEDIT&&vis(el));if(!a)a=rows.find(el=>el.getBoundingClientRect().bottom>0);
+  const id=a&&a.dataset.id,top=a&&a.getBoundingClientRect().top,y=scrollY;FEED.min=$('#feed')?FEED.i:0;
+  try{fn();}finally{FEED.min=0;}
+  let el=id&&document.querySelector('.hrow[data-id="'+CSS.escape(id)+'"]');
+  if(!el&&id){const k=FEED.list.findIndex(o=>o.id===id);if(k>=0){while(FEED.i<=k&&feedChunk());el=document.querySelector('.hrow[data-id="'+CSS.escape(id)+'"]');}}
+  if(el)scrollTo(0,scrollY+el.getBoundingClientRect().top-top);else scrollTo(0,y);}
 // ---- circle edit ----
 function itemOf(k,id){return k==='acc'?S.accounts.find(a=>a.id===id):S.cats.find(c=>c.id===id);}
 function editCirc(k,id){const it=id?{...itemOf(k,id)}:k==='acc'?{id:uid(),name:'',kind:'card',icon:'💳',color:COLORS.card,initial:0,cardMask:'',order:99}:{id:uid(),name:'',income:k==='inc',icon:k==='inc'?'💵':'🛒',color:COLORS[k],order:99};
@@ -291,7 +301,7 @@ async function delCirc(){const{k,it}=_ce;const used=k==='acc'?S.ops.some(o=>o.ac
 let LASTLIST=[];
 function dayGroups(list){LASTLIST=list;const g={};[...list].sort(Core.opCmp).forEach(o=>(g[o.date.slice(0,10)]=g[o.date.slice(0,10)]||[]).push(o));
   return Object.entries(g).map(([d,ops])=>{const sum=ops.reduce((x,o)=>x+(o.type==='expense'?-o.amount:o.type==='income'?o.amount:0),0);
-   return `<div class="dayh"><span>${new Date(d).toLocaleDateString('ru-RU',{day:'numeric',month:'long',year:d.slice(0,4)===today().slice(0,4)?undefined:'numeric',weekday:'short'})}</span><span>${fmt(sum)}</span></div>${ops.map(hrow).join('')}`;}).join('');}
+   return `<div class="dayh" data-d="${d}"><span>${new Date(d).toLocaleDateString('ru-RU',{day:'numeric',month:'long',year:d.slice(0,4)===today().slice(0,4)?undefined:'numeric',weekday:'short'})}</span><span>${fmt(sum)}</span></div>${ops.map(hrow).join('')}`;}).join('');}
 function histFilter(){const hf=window._hf||{};const cur=hf.k?hf.k+':'+hf.id:'';
   const opt=(v,t)=>`<option value="${v}" ${v===cur?'selected':''}>${esc(t)}</option>`;
   const months=[...new Set(S.ops.map(o=>o.date.slice(0,7)))].sort().reverse();
@@ -319,7 +329,7 @@ function feedChunk(){const L=FEED.list;if(FEED.i>=L.length)return false;let j=FE
   const part=L.slice(FEED.i,j);FEED.i=j;const f=$('#feed');if(!f)return false;
   f.insertAdjacentHTML('beforeend',dayGroups(part));LASTLIST=L;
   const m=$('#feedmore');if(m)m.textContent=FEED.i<L.length?'Загрузка… ('+FEED.i+' из '+L.length+')':(L.length?'Это все операции':'Нет операций');return true;}
-function feedInit(list){FEED.list=list;FEED.i=0;LASTLIST=list;if(FEED.obs)FEED.obs.disconnect();feedChunk();
+function feedInit(list){FEED.list=list;FEED.i=0;LASTLIST=list;if(FEED.obs)FEED.obs.disconnect();feedChunk();while(FEED.i<(FEED.min||0)&&feedChunk());
   const m=$('#feedmore');if(m&&'IntersectionObserver' in window){FEED.obs=new IntersectionObserver(es=>{if(es.some(e=>e.isIntersecting))feedChunk();},{rootMargin:'800px'});FEED.obs.observe(m);}
   else if(m){m.onclick=feedChunk;}}
 function feedJump(m){const L=FEED.list;const idx=L.findIndex(o=>o.date.slice(0,7)<=m);if(idx<0)return;
@@ -497,7 +507,7 @@ function ssToReview(){const rows=ssRows.filter(r=>r.amount&&r.date).map(r=>({...
 // ---- CoinKeeper import ----
 let CK=null;
 const ckSkipped=()=>JSON.parse(localStorage.ckSkipped||'[]');
-const APP_VER='v43';
+const APP_VER='v44';
 let CKB=[];try{CKB=JSON.parse(localStorage.ckBanks||'[]');}catch(e){CKB=[];}
 function ckbStatus(){const el=$('#ckb');if(!el)return;el.innerHTML=CKB.length?'✅ Выписки загружены: '+CKB.map(b=>esc((b.accountId?accName(b.accountId):b.name)+' ('+b.ops.length+' операций)')).join(', ')+' <button class="b s" onclick="CKB=[];localStorage.removeItem(\'ckBanks\');ckbStatus();if(CK){CK=Core.planCoinKeeper(CK.items.map(i=>i.row),{accounts:S.accounts,cats:S.cats,ops:S.ops,skipped:ckSkipped()});CK.items.forEach(i=>{i.accept=i.action===\'add\'||i.action===\'link\'});renderCK();}">Сбросить</button>':'<span class="neg">⚠️ Выписки не загружены — подсказок банка не будет. Сначала нажмите кнопку выше.</span>';}
 async function ckBanks(files){CKB=[];for(const f of files){const r=Core.parseTBank(Core.decode(await f.arrayBuffer()));if(r.ops.length)CKB.push({name:f.name,ops:r.ops});}
