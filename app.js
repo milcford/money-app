@@ -172,7 +172,7 @@ function renameProfile(){const n=prompt('Название',localStorage.profile|
 // ---- circles ----
 function circ(kind,item,amt){const cls=kind==='inc'?'inc':kind==='exp'?'exp':'acc';
   const style=kind==='acc'||item.color&&item.color!==COLORS[kind]?`background:${item.color}`:'';
-  return `<div class="c ${cls}" data-k="${kind}" data-id="${item.id}"><div class="lbl">${esc(item.name)}</div><div class="ic" style="${style}">${esc(item.icon||'•')}</div><div class="amt">${fmt(amt)}</div>${kind==='acc'&&item.credit?`<div class="mut" style="font-size:10px;text-align:center">${item.limit?'доступно '+fmt(+item.limit+(amt||0)):(amt<0?'долг':'')}</div>`:''}</div>`;}
+  return `<div class="c ${cls}" data-k="${kind}" data-id="${item.id}"><div class="lbl">${esc(item.name)}</div><div class="ic" style="${style}">${esc(item.icon||'•')}</div>${kind==='acc'&&item.credit&&+item.limit?(()=>{const av=+item.limit+(amt||0);return `<div class="amt${av<0?' neg':''}">${fmt(av)}</div><div class="mut" style="font-size:10px;text-align:center;white-space:nowrap">${amt<0?'долг '+fmt(-amt).replace(/ /g,'\u00a0'):'долга нет'}</div>`;})():`<div class="amt">${fmt(amt)}</div>${kind==='acc'&&item.credit?`<div class="mut" style="font-size:10px;text-align:center">${amt<0?'долг':''}</div>`:''}`}</div>`;}
 const addCirc=k=>`<div class="c add" data-k="add" data-add="${k}"><div class="lbl">.</div><div class="ic">＋</div><div class="amt"> </div></div>`;
 const COLS=()=>Math.max(4,Math.min(12,Math.floor(((document.querySelector('main')||document.body).clientWidth||360)/105)));
 let _cols=0;addEventListener('resize',()=>{if(COLS()!==_cols&&cur==='home')show('home');});
@@ -546,7 +546,7 @@ function ssToReview(){const rows=ssRows.filter(r=>r.amount&&r.date).map(r=>({...
 // ---- CoinKeeper import ----
 let CK=null;
 const ckSkipped=()=>JSON.parse(localStorage.ckSkipped||'[]');
-const APP_VER='v51';
+const APP_VER='v52';
 let CKB=[];try{CKB=JSON.parse(localStorage.ckBanks||'[]');}catch(e){CKB=[];}
 function ckbStatus(){const el=$('#ckb');if(!el)return;el.innerHTML=CKB.length?'✅ Выписки загружены: '+CKB.map(b=>esc((b.accountId?accName(b.accountId):b.name)+' ('+b.ops.length+' операций)')).join(', ')+' <button class="b s" onclick="CKB=[];localStorage.removeItem(\'ckBanks\');ckbStatus();if(CK){CK=Core.planCoinKeeper(CK.items.map(i=>i.row),{accounts:S.accounts,cats:S.cats,ops:S.ops,skipped:ckSkipped()});CK.items.forEach(i=>{i.accept=i.action===\'add\'||i.action===\'link\'});renderCK();}">Сбросить</button>':'<span class="neg">⚠️ Выписки не загружены — подсказок банка не будет. Сначала нажмите кнопку выше.</span>';}
 async function ckBanks(files){CKB=[];for(const f of files){const r=Core.parseTBank(Core.decode(await f.arrayBuffer()));if(r.ops.length)CKB.push({name:f.name,ops:r.ops});}
