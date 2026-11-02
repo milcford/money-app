@@ -65,3 +65,4 @@ input,select,.b{font-size:17px;padding:10px;border-radius:10px;border:1px solid 
 .opcom{width:100%;font:15px inherit;font-family:inherit;padding:8px 10px;border-radius:10px;border:1px solid #3a3a3c;background:#2c2c2e;color:#fff;margin:4px 0;resize:none}
 .opbtns{display:flex;gap:8px;margin-top:6px}.opbtns .b{margin:0}.opbtns .b.r{flex:0 0 auto;width:auto;padding:10px 14px}
 .hrow .com{font-size:12px}
+.tag.q{background:#a8661c}

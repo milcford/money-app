@@ -211,7 +211,8 @@ const days=(a,b)=>Math.abs(new Date(a)-new Date(b))/864e5;
 const OWN=/между своими счетами/i;
 // internal bank transfer whose other side is not named (T-Bank «Внутрибанковский перевод», «Внутренний перевод», «Перевод между счетами»); OCR may cut the tail
 const INB=/внутрибанков|внутренн\S* перев|перевод между (своими )?сч/i;
-function reconcile(imported, existing, cardAcc, cashAcc, ownAcc, pairAcc, others){
+function reconcile(imported, existing, cardAcc, cashAcc, ownAcc, pairAcc, others, opts){
+  const incomeIn=!!(opts&&opts.incomeIn);
   const known=new Set(); existing.forEach(o=>(o.bankIds||[]).forEach(b=>known.add(b)));
   const used=new Set(); const out=[];
   for(const op of imported){
@@ -229,6 +230,8 @@ function reconcile(imported, existing, cardAcc, cashAcc, ownAcc, pairAcc, others
       (dir==='in'&&((o.type==='income'&&o.accountId===cardAcc)||(o.type==='transfer'&&o.toAccountId===cardAcc)))))
       .sort((a,b)=>days(a.date,op.date)-days(b.date,op.date));
     if(cand.length){used.add(cand[0].id);out.push({op,action:'link',target:cand[0].id});continue;}
+    // account rule «Входящие = доход»: every incoming op is income (no transfer guessing), user picks Доход/Прочее
+    if(incomeIn&&dir==='in'){out.push({op,action:'add',type:'income',inc:true,cat:'Доход'});continue;}
     // transfer between own T-Bank accounts: link to the other side already recorded (e.g. converted CoinKeeper row), else new transfer
     if(OWN.test(op.desc||'')){const t=existing.find(o=>!used.has(o.id)&&o.type==='transfer'&&Math.abs(o.amount-abs)<0.005&&days(o.date.slice(0,10),op.date.slice(0,10))<=1&&
         (dir==='out'?o.accountId===cardAcc:o.toAccountId===cardAcc)&&!(o.sides||[]).includes(cardAcc));
@@ -354,6 +357,11 @@ function parseYandexText(lines){const D=/(\d{2})\.(\d{2})\.(\d{4})/,AM=/([+\-−
     const t=l.match(/^в (\d{2}):(\d{2})$/);if(t){cur.date=cur.date.slice(0,11)+t[1]+':'+t[2]+':00';continue;}
     cur.desc+=' '+l;}
   flush();return {ops,skipped:0,errors:ops.length?[]:['Не удалось найти операции в выписке Яндекс Банка'],closing,totIn,totOut};}
-root.Core={parseJetlendMain,planJetlendSnap,JL,jlDate,parseJetlend,planJetlend,moveOp,opCmp,shotTimes,cleanYandexDesc,parseYandexText,ownToTransfer,OWN,INB,suggestCoinKeeper,guessBankAccount,bankKind,parseCoinKeeper,planCoinKeeper,decideOp,parseScreenshotText,screenshotIds,similar,decode,parseTBank,reconcile,balances,hash,isCash};
+// ops on «Входящие = доход» accounts that need a Доход/Прочее decision: imported transfers into the account, or income without category
+function needsInReview(o,ids){if(o.deleted||o.review===0)return false;const bank=(o.bankIds||[]).some(b=>!String(b).startsWith('ck:'));
+  if(o.type==='transfer')return ids.includes(o.toAccountId)&&!ids.includes(o.accountId)&&bank;
+  if(o.type==='income')return ids.includes(o.accountId)&&!o.category;return false;}
+root.Core={needsInReview,parseJetlendMain,planJetlendSnap,JL,jlDate,parseJetlend,planJetlend,moveOp,opCmp,shotTimes,cleanYandexDesc,parseYandexText,ownToTransfer,OWN,INB,suggestCoinKeeper,guessBankAccount,bankKind,parseCoinKeeper,planCoinKeeper,decideOp,parseScreenshotText,screenshotIds,similar,decode,parseTBank,reconcile,balances,hash,isCash};
 if(typeof module!=='undefined')module.exports=root.Core;
 })(typeof self!=='undefined'?self:globalThis);
+
