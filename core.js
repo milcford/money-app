@@ -68,10 +68,13 @@ function parseHeader(line,today){
   return null;}
 function cleanLine(s){return s.replace(/[|©®@>›»]+/g,' ').replace(/\s+/g,' ').trim();}
 function parseScreenshotText(text,today=new Date()){
-  const ops=[];let date=null,pendingDesc='',afterHdr=false;
+  const ops=[];let date=null,pendingDesc='',afterHdr=false,summary=false;
   for(let raw of String(text).split(/\r?\n/)){
     const line=cleanLine(raw); if(!line)continue;
-    const h=parseHeader(line,today); if(h){date=h;pendingDesc='';afterHdr=true;continue;}
+    const h=parseHeader(line,today); if(h){if(!date&&summary)ops.length=0;date=h;pendingDesc='';afterHdr=true;continue;}
+    // summary block before the first day header (Траты/Пополнения cards, month/card filter chips): ignore
+    if(!date&&/(траты|пополнения|без перевод|^(январ|феврал|март|апрел|ма[йя]|июн|июл|август|сентябр|октябр|ноябр|декабр)\S*$)/i.test(line)){summary=true;pendingDesc='';continue;}
+    if(!date&&(line.match(/\d\s*(₽|руб|[РPр])(?![а-яё])/gi)||[]).length>=2){summary=true;pendingDesc='';continue;}
     if(/^(операции|все операции|расходы|доходы|поиск|недавние|главная|платежи|чат|ещё|еще)$/i.test(line))continue;
     const m=line.match(AMT);const was=afterHdr;afterHdr=false;
     // day total printed next to the day header (OCR often puts it on its own line): skip it
