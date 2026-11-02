@@ -170,7 +170,7 @@ history(){const hf=window._hf||{};const f=hf.k?opMatch(hf.k,hf.id):()=>true;cons
   V.innerHTML=`<div class="hdr"><h2>История</h2><div><button onclick="show('import')">⤓ Импорт</button> <button onclick="menu()">⋯</button></div></div>${histFilter()}
   ${n?`<div class="card" style="display:flex;justify-content:space-between;align-items:center"><span>Новых из банка: <b>${n}</b></span><button class="b s" style="width:auto;margin:0;font-size:14px" onclick="markAll()">Всё верно</button></div>`:''}
   ${Object.entries(g).map(([d,ops])=>{const sum=ops.reduce((x,o)=>x+(o.type==='expense'?-o.amount:o.type==='income'?o.amount:0),0);
-   return `<div class="dayh"><span>${new Date(d).toLocaleDateString('ru-RU',{day:'numeric',month:'long',weekday:'short'})}</span><span>${fmt(sum)}</span></div>${ops.map(hrow).join('')}`;}).join('')||'<div class="card mut">Пока пусто. Перетащите кружок на главном экране или загрузите выписку.</div>'}`;},
+   return `<div class="dayh" data-d="${d}"><span>${new Date(d).toLocaleDateString('ru-RU',{day:'numeric',month:'long',weekday:'short'})}</span><span>${fmt(sum)}</span></div>${ops.map(hrow).join('')}`;}).join('')||'<div class="card mut">Пока пусто. Перетащите кружок на главном экране или загрузите выписку.</div>'}`;},
 import(){V.innerHTML=`<div class="hdr"><h2>Импорт <span class="mut" style="font-size:13px">версия ${APP_VER}</span></h2><button onclick="show('history')">‹ Назад</button></div>
   <div class="card"><b>1. Выписка банка</b><p class="mut">В приложении Т‑Банка: Счёт → Выписка → CSV. Повторная или пересекающаяся выписка дублей не создаст. <b>Это добавляет операции банка в приложение.</b> Для переноса из CoinKeeper используйте блок 3, а не этот.</p>${(()=>{const n=S.ops.filter(o=>(o.bankIds||[]).some(b=>!String(b).startsWith('ck:'))&&!(o.bankIds||[]).some(b=>String(b).startsWith('ck:'))).length;return n?`<div class="mut">Сейчас в приложении операций из выписок: ${n}. <button class="b s" onclick="delBankOps()">Удалить их</button></div>`:'';})()}
   <label class="mut">Если в файле нет номера карты — на какой счёт</label><select id="csv_acc">${bankAccs().map(a=>`<option value="${a.id}">${esc(a.name)} · ${esc((BANKS.find(b=>b[0]===bankOf(a))||[])[1]||'')}</option>`).join('')}</select>
@@ -309,8 +309,21 @@ function detail(k,id){const it=itemOf(k,id),f=opMatch(k,id);const all=S.ops.filt
   <button class="b" onclick="${add.replace(/"/g,'&quot;')}">+ Добавить</button>
   ${k==='acc'?(()=>{const bal=Core.balances(S.accounts,S.ops)[id];return `<div class="row"><span>Остаток сейчас</span><b>${fmt(bal)}</b></div>${it.credit?`<div class="row"><span>Кредитка</span><span>${esc(credInfo(it,bal))}${it.limit?' · лимит '+fmt(it.limit):''}</span></div>`:''}`;})():''}
 </div>
-  <div class="card"><b>Операции (${ops.length})</b></div>${dayGroups(ops.slice(0,300))}${ops.length>300?`<div class="mut">…ещё ${ops.length-300}, см. Историю</div>`:''}
-  <div class="card"><b>По месяцам</b>${Object.entries(bm).sort((a,b)=>b[0].localeCompare(a[0])).map(([m,v])=>`<div class="row" onclick="setPer('${m}')" style="cursor:pointer"><span>${perLabel(m)}</span><b>${fmt(v)}</b></div>`).join('')||'<div class="mut">Нет операций</div>'}</div>`;}
+  <details class="card" id="bymonth"><summary><b>По месяцам</b> <span class="mut">(нажмите месяц — перейти к нему в ленте)</span></summary>${Object.entries(bm).sort((a,b)=>b[0].localeCompare(a[0])).map(([m,v])=>`<div class="row" onclick="feedJump('${m}')" style="cursor:pointer"><span>${perLabel(m)}</span><b>${fmt(v)}</b></div>`).join('')||'<div class="mut">Нет операций</div>'}</details>
+  <div class="card"><b>Операции (${all.length})</b>${ops.length?` <span class="mut">· за ${esc(perLabel(PER))}: ${ops.length}</span>`:''}</div><div id="feed"></div><div id="feedmore" class="mut" style="text-align:center;padding:12px"></div>`;
+  feedInit([...all].sort(Core.opCmp));}
+// continuous lazy feed: whole days per chunk so day totals stay correct
+let FEED={list:[],i:0,obs:null};
+function feedChunk(){const L=FEED.list;if(FEED.i>=L.length)return false;let j=FEED.i;const N=80;
+  while(j<L.length&&(j-FEED.i<N||L[j].date.slice(0,10)===L[j-1].date.slice(0,10)))j++;
+  const part=L.slice(FEED.i,j);FEED.i=j;const f=$('#feed');if(!f)return false;
+  f.insertAdjacentHTML('beforeend',dayGroups(part));LASTLIST=L;
+  const m=$('#feedmore');if(m)m.textContent=FEED.i<L.length?'Загрузка… ('+FEED.i+' из '+L.length+')':(L.length?'Это все операции':'Нет операций');return true;}
+function feedInit(list){FEED.list=list;FEED.i=0;LASTLIST=list;if(FEED.obs)FEED.obs.disconnect();feedChunk();
+  const m=$('#feedmore');if(m&&'IntersectionObserver' in window){FEED.obs=new IntersectionObserver(es=>{if(es.some(e=>e.isIntersecting))feedChunk();},{rootMargin:'800px'});FEED.obs.observe(m);}
+  else if(m){m.onclick=feedChunk;}}
+function feedJump(m){const L=FEED.list;const idx=L.findIndex(o=>o.date.slice(0,7)<=m);if(idx<0)return;
+  while(FEED.i<=idx&&feedChunk());const d=L[idx].date.slice(0,10);const el=[...document.querySelectorAll('#feed .dayh')].find(h=>h.dataset.d===d);if(el)el.scrollIntoView({behavior:'smooth',block:'start'});}
 // ---- drag & drop between circles ----
 let D=null;
 function circAt(x,y){const el=document.elementFromPoint(x,y);return el&&el.closest('.c:not(.add)');}
@@ -484,7 +497,7 @@ function ssToReview(){const rows=ssRows.filter(r=>r.amount&&r.date).map(r=>({...
 // ---- CoinKeeper import ----
 let CK=null;
 const ckSkipped=()=>JSON.parse(localStorage.ckSkipped||'[]');
-const APP_VER='v42';
+const APP_VER='v43';
 let CKB=[];try{CKB=JSON.parse(localStorage.ckBanks||'[]');}catch(e){CKB=[];}
 function ckbStatus(){const el=$('#ckb');if(!el)return;el.innerHTML=CKB.length?'✅ Выписки загружены: '+CKB.map(b=>esc((b.accountId?accName(b.accountId):b.name)+' ('+b.ops.length+' операций)')).join(', ')+' <button class="b s" onclick="CKB=[];localStorage.removeItem(\'ckBanks\');ckbStatus();if(CK){CK=Core.planCoinKeeper(CK.items.map(i=>i.row),{accounts:S.accounts,cats:S.cats,ops:S.ops,skipped:ckSkipped()});CK.items.forEach(i=>{i.accept=i.action===\'add\'||i.action===\'link\'});renderCK();}">Сбросить</button>':'<span class="neg">⚠️ Выписки не загружены — подсказок банка не будет. Сначала нажмите кнопку выше.</span>';}
 async function ckBanks(files){CKB=[];for(const f of files){const r=Core.parseTBank(Core.decode(await f.arrayBuffer()));if(r.ops.length)CKB.push({name:f.name,ops:r.ops});}
