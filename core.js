@@ -75,6 +75,8 @@ function parseScreenshotText(text,today=new Date()){
     // summary block before the first day header (Траты/Пополнения cards, month/card filter chips): ignore
     if(!date&&/(траты|пополнения|без перевод|^(январ|феврал|март|апрел|ма[йя]|июн|июл|август|сентябр|октябр|ноябр|декабр)\S*$)/i.test(line)){summary=true;pendingDesc='';continue;}
     if(!date&&(line.match(/\d\s*(₽|руб|[РPр])(?![а-яё])/gi)||[]).length>=2){summary=true;pendingDesc='';continue;}
+    // Яндекс Сплит list: installment progress lines («часть 1 из 4», «Осталось 3 платежа», «1 из 4») are not ops
+    if(/^(часть\s*\d+\s*из\s*\d+|\d+\s*из\s*\d+(\s*(платеж|част)\S*)?|осталось\b.*|следующий платёж.*|следующий платеж.*)$/i.test(line))continue;
     if(/^(операции|все операции|расходы|доходы|поиск|недавние|главная|платежи|чат|ещё|еще)$/i.test(line))continue;
     const m=line.match(AMT);const was=afterHdr;afterHdr=false;
     // day total printed next to the day header (OCR often puts it on its own line): skip it
@@ -225,6 +227,7 @@ function findDupTransfer(ops,t,skip){const a=Math.abs(+t.amount);if(!t.accountId
   return (ops||[]).find(o=>o&&!o.deleted&&o.type==='transfer'&&o.id!==t.id&&!(skip&&skip.has(o.id))&&Math.abs(o.amount-a)<0.005&&
     ((o.accountId===t.accountId&&o.toAccountId===t.toAccountId)||(o.accountId===t.toAccountId&&o.toAccountId===t.accountId))&&
     days(String(o.date).slice(0,10),String(t.date).slice(0,10))<=1)||null;}
+const SPLIT=/(сплит|split|погашени[ея] рассрочк|рассрочк)/i,SPLIT_PAY=/(погаш|платеж|платёж|оплата (части|рассрочк|сплит)|внесени)/i;
 function reconcile(imported, existing, cardAcc, cashAcc, ownAcc, pairAcc, others, opts){
   const incomeIn=!!(opts&&opts.incomeIn);
   const known=new Set(); existing.forEach(o=>(o.bankIds||[]).forEach(b=>known.add(b)));
@@ -245,6 +248,10 @@ function reconcile(imported, existing, cardAcc, cashAcc, ownAcc, pairAcc, others
       .sort((a,b)=>days(a.date,op.date)-days(b.date,op.date));
     if(cand.length){used.add(cand[0].id);out.push({op,action:'link',target:cand[0].id});continue;}
     // account rule «Входящие = доход»: every incoming op is income (no transfer guessing), user picks Доход/Прочее
+    // Яндекс Сплит: repayment from a Yandex card statement -> transfer card -> Split; on the Split statement an incoming repayment -> transfer from the Yandex card
+    const spl=opts&&opts.splitAcc;
+    if(spl&&cardAcc!==spl&&dir==='out'&&SPLIT.test(op.desc||'')){out.push({op,action:'transfer',from:cardAcc,to:spl});continue;}
+    if(spl&&cardAcc===spl&&dir==='in'&&SPLIT_PAY.test(op.desc||'')){out.push({op,action:'transfer',from:opts.splitFrom||null,to:spl,pick:!opts.splitFrom});continue;}
     if(incomeIn&&dir==='in'){out.push({op,action:'add',type:'income',inc:true,cat:(opts&&opts.inCat)||'Доход'});continue;}
     // transfer between own T-Bank accounts: link to the other side already recorded (e.g. converted CoinKeeper row), else new transfer
     if(OWN.test(op.desc||'')){const t=existing.find(o=>!used.has(o.id)&&o.type==='transfer'&&Math.abs(o.amount-abs)<0.005&&days(o.date.slice(0,10),op.date.slice(0,10))<=1&&
@@ -354,7 +361,7 @@ function parseYandexText(lines){const D=/(\d{2})\.(\d{2})\.(\d{4})/,AM=/([+\-−
   const ops=[],seen={};let cur=null,closing=null,totIn=null,totOut=null,started=false,ended=false;
   const val=m=>{const v=num(m[2]);return m[1]==='+'?v:m[1]?-v:null;};
   const flush=()=>{if(!cur)return;cur.desc=cleanYandexDesc(cur.desc);
-    if(cur.amount==null)cur.amount=/(пополн|зачисл|входящ|возврат|кешб[эе]к|проценты|начислен)/i.test(cur.desc)?Math.abs(cur.abs):-Math.abs(cur.abs);
+    if(cur.amount==null)cur.amount=/(пополн|погашен|зачисл|входящ|возврат|кешб[эе]к|проценты|начислен)/i.test(cur.desc)?Math.abs(cur.abs):-Math.abs(cur.abs);
     const base=['y',cur.date,cur.amount.toFixed(2),norm(cur.desc)].join('|');seen[base]=(seen[base]||0)+1;
     ops.push({bankId:hash(base+'#'+seen[base]),date:cur.date,amount:cur.amount,currency:'RUB',card:cur.card||'',desc:cur.desc,bankCategory:'',mcc:''});cur=null;};
   for(const raw of lines){const l=String(raw).replace(/\s+/g,' ').trim();if(!l)continue;
@@ -377,7 +384,7 @@ function parseYandexText(lines){const D=/(\d{2})\.(\d{2})\.(\d{4})/,AM=/([+\-−
 function needsInReview(o,ids){if(o.deleted||o.review===0)return false;const bank=(o.bankIds||[]).some(b=>!String(b).startsWith('ck:'));
   if(o.type==='transfer')return ids.includes(o.toAccountId)&&!ids.includes(o.accountId)&&bank;
   if(o.type==='income')return ids.includes(o.accountId)&&!o.category;return false;}
-root.Core={findDupTransfer,PERSON,p2pMislink,splitP2P,needsInReview,parseJetlendMain,planJetlendSnap,JL,jlDate,parseJetlend,planJetlend,moveOp,opCmp,shotTimes,cleanYandexDesc,parseYandexText,ownToTransfer,OWN,INB,suggestCoinKeeper,guessBankAccount,bankKind,parseCoinKeeper,planCoinKeeper,decideOp,parseScreenshotText,screenshotIds,similar,decode,parseTBank,reconcile,balances,hash,isCash};
+root.Core={SPLIT,SPLIT_PAY,findDupTransfer,PERSON,p2pMislink,splitP2P,needsInReview,parseJetlendMain,planJetlendSnap,JL,jlDate,parseJetlend,planJetlend,moveOp,opCmp,shotTimes,cleanYandexDesc,parseYandexText,ownToTransfer,OWN,INB,suggestCoinKeeper,guessBankAccount,bankKind,parseCoinKeeper,planCoinKeeper,decideOp,parseScreenshotText,screenshotIds,similar,decode,parseTBank,reconcile,balances,hash,isCash};
 if(typeof module!=='undefined')module.exports=root.Core;
 })(typeof self!=='undefined'?self:globalThis);
 

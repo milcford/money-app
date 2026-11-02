@@ -14,6 +14,9 @@ const COLORS={inc:'#2c4a9a',cash:'#c9a84c',savings:'#4caf72',card:'#4a3b1c',exp:
 const PALETTE=['#2c4a9a','#c9a84c','#4caf72','#4a3b1c','#0d2626','#8e44ad','#c0392b','#16a085','#d35400','#555'];
 async function ensureBlacks(){const acc=await raw('accounts');for(const x of acc)if((x.id==='mama_t'||x.id==='anya_t')&&x.credit===undefined)await put('accounts',{...x,credit:true,limit:x.limit||0});for(const[id,name,card]of[['mama_black','Мама Black','mama_t'],['anya_black','Аня Black','anya_t']])
   if(acc.some(a=>a.id===card)&&!acc.some(a=>a.id===id))await putRaw('accounts',{id,name,kind:'card',icon:'🖤',color:'#222',initial:0,cardMask:'',order:50,updatedAt:1,_dirty:1});}
+// v47: «Яндекс Сплит» — fixed id + updatedAt=1 so it syncs without duplicates; credit, limit 100 000, not «Входящие = доход»
+async function ensureSplit(){if((await raw('accounts')).some(a=>a.id==='ya_split'))return;
+  await putRaw('accounts',{id:'ya_split',name:'Яндекс Сплит',kind:'card',bank:'yandex',credit:true,limit:100000,incomeIn:false,inCat:'',icon:'🧩',color:'#5b3fd6',initial:0,cardMask:'',order:55,updatedAt:1,_dirty:1});}
 // one-time-ish (idempotent) cleanup: PDF header junk (ФИО, паспорт, договор) in Yandex Bank op descriptions
 async function cleanYandex(){const ya=new Set((await raw('accounts')).filter(a=>!a.deleted&&a.bank==='yandex').map(a=>a.id));if(!ya.size)return 0;let n=0;
   for(const o of await raw('ops')){if(o.deleted||!(ya.has(o.accountId)||ya.has(o.toAccountId)))continue;const c={...o};
@@ -35,7 +38,7 @@ async function load(){
     for(const[n,ic]of[['Доход','💵'],['Аня','🛒'],['ЗП','🛒'],['Прочее','🛒']])await seed('cats',{id:'inc_'+j++,name:n,income:true,icon:ic,color:COLORS.inc,order:i++});j=0;
     for(const[n,ic]of[['Продукты','🧃'],['Развлечения','🎞️'],['Транспорт','🚌'],['Еда вне дома','🥤'],['Покупки','🛍️'],['Прочее','🛒'],['Пивной','🍺'],['Кальян','💨'],['Ремонт','🏠'],['на чай','🪙'],['Валенсия','✈️'],['парикмахерская','💇']])
       await seed('cats',{id:'exp_'+j++,name:n,income:false,icon:ic,color:COLORS.exp,order:i++});}
-  await ensureBlacks();await cleanYandex();await ensureJetlend();await migIncomeIn();await migP2P();await migTrInc();await migTrInc3();
+  await ensureBlacks();await ensureSplit();await cleanYandex();await ensureJetlend();await migIncomeIn();await migP2P();await migTrInc();await migTrInc3();
   for(const st of ['accounts','ops','cats'])S[st]=await all(st);S.accounts.sort(byOrder);S.cats.sort(byOrder);}
 // ---- sync ----
 let syncing=false,syncAgain=false,syncTimer=null,syncMsg='';
@@ -94,7 +97,8 @@ function refreshView(){header();if(views[cur])views[cur](window._arg);}
 function perBar(){return `<div class="perbar"><button onclick="perStep(-1)">◀</button><span onclick="setPer(PER?'':month())">${esc(perLabel(PER))}</span><button onclick="perStep(1)">▶</button></div>`;}
 // Tinkoff Black wallet paired with a card wallet (fixed ids so devices don't duplicate)
 const pairOf=id=>{const c=S.accounts.find(a=>a.id!==id&&blackFor(a.id)&&blackFor(a.id).id===id);return c&&c.id;};
-function blackFor(cardId){const c=S.accounts.find(a=>a.id===cardId);if(!c||/black/i.test(c.name))return null;
+const splitOpts=()=>({splitAcc:S.accounts.some(x=>x.id==='ya_split'&&!x.deleted)?'ya_split':null,splitFrom:(liveAccs().find(x=>x.bank==='yandex'&&x.id!=='ya_split'&&!x.deleted)||{}).id});
+function blackFor(cardId){if(cardId==='ya_split')return null;const c=S.accounts.find(a=>a.id===cardId);if(!c||/black/i.test(c.name))return null;
   const id=cardId==='mama_t'?'mama_black':cardId==='anya_t'?'anya_black':cardId+'_black';
   return S.accounts.find(a=>a.id===id)||{id,name:c.name.split(/\s+/)[0]+' Black',kind:'card',icon:'🖤',color:'#222',initial:0,cardMask:'',order:50,_new:1};}
 // «Входящие = доход»: mom's accounts on by default (one-time), then flag their imported incoming transfers for review (one-time, syncs via put)
@@ -408,7 +412,7 @@ async function doImport(file){const sel=S.accounts.find(a=>a.id===($('#csv_acc')
   // group by card account
   const groups={};r.ops.forEach(o=>{const a=cardAccFor(o.card,r.bank);(groups[a]=groups[a]||[]).push(o);});
   pending=[];for(const a in groups){const st=S.ops.filter(o=>(o.accountId===a||o.toAccountId===a)&&!/корректировка/i.test(o.category||'')).map(o=>o.date.slice(0,10)).sort()[0]||'';
-    pending.push(...Core.reconcile(groups[a],S.ops,a,'cash',(blackFor(a)||{}).id,pairOf(a),bankAccs().map(x=>x.id).filter(x=>x!==a),{incomeIn:!!(S.accounts.find(x=>x.id===a)||{}).incomeIn,inCat:inCatOf(a)}).map(p=>({...p,card:a,old:!!st&&p.op.date.slice(0,10)<st,accept:p.action!=='duplicate'&&!(st&&p.op.date.slice(0,10)<st)})));}
+    pending.push(...Core.reconcile(groups[a],S.ops,a,'cash',(blackFor(a)||{}).id,pairOf(a),bankAccs().map(x=>x.id).filter(x=>x!==a),{incomeIn:!!(S.accounts.find(x=>x.id===a)||{}).incomeIn,inCat:inCatOf(a),...splitOpts()}).map(p=>({...p,card:a,old:!!st&&p.op.date.slice(0,10)<st,accept:p.action!=='duplicate'&&!(st&&p.op.date.slice(0,10)<st)})));}
   IMP={closing:r.closing,accs:Object.keys(groups)};renderReview(r.skipped);}
 let IMP={};
 function scrollEnd(){const e=$('#rv_end');if(e)e.scrollIntoView({behavior:'smooth',block:'end'});}
@@ -512,12 +516,12 @@ function renderSS(){$('#ssedit').innerHTML=`<div class="card"><b>Распозн�
   <button class="b" onclick="ssToReview()">Далее: проверка дублей</button></div>`;}
 function ssToReview(){const rows=ssRows.filter(r=>r.amount&&r.date).map(r=>({...r,date:r.date+'T00:00:00',amount:+r.amount}));
   const ops=Core.shotTimes(Core.screenshotIds(rows)).map(r=>({bankId:r.bankId,date:r.date,amount:r.amount,desc:r.desc,bankCategory:r.cat||'',card:'',mcc:''}));
-  IMP={accs:[ssAcc]};pending=Core.reconcile(ops,S.ops,ssAcc,'cash',(blackFor(ssAcc)||{}).id,pairOf(ssAcc),undefined,{incomeIn:!!(S.accounts.find(x=>x.id===ssAcc)||{}).incomeIn,inCat:inCatOf(ssAcc)}).map(p=>({...p,card:ssAcc,accept:p.action!=='duplicate'}));
+  IMP={accs:[ssAcc]};pending=Core.reconcile(ops,S.ops,ssAcc,'cash',(blackFor(ssAcc)||{}).id,pairOf(ssAcc),undefined,{incomeIn:!!(S.accounts.find(x=>x.id===ssAcc)||{}).incomeIn,inCat:inCatOf(ssAcc),...splitOpts()}).map(p=>({...p,card:ssAcc,accept:p.action!=='duplicate'}));
   $('#ssedit').innerHTML='';renderReview(0);$("#review").scrollIntoView();}
 // ---- CoinKeeper import ----
 let CK=null;
 const ckSkipped=()=>JSON.parse(localStorage.ckSkipped||'[]');
-const APP_VER='v46';
+const APP_VER='v47';
 let CKB=[];try{CKB=JSON.parse(localStorage.ckBanks||'[]');}catch(e){CKB=[];}
 function ckbStatus(){const el=$('#ckb');if(!el)return;el.innerHTML=CKB.length?'✅ Выписки загружены: '+CKB.map(b=>esc((b.accountId?accName(b.accountId):b.name)+' ('+b.ops.length+' операций)')).join(', ')+' <button class="b s" onclick="CKB=[];localStorage.removeItem(\'ckBanks\');ckbStatus();if(CK){CK=Core.planCoinKeeper(CK.items.map(i=>i.row),{accounts:S.accounts,cats:S.cats,ops:S.ops,skipped:ckSkipped()});CK.items.forEach(i=>{i.accept=i.action===\'add\'||i.action===\'link\'});renderCK();}">Сбросить</button>':'<span class="neg">⚠️ Выписки не загружены — подсказок банка не будет. Сначала нажмите кнопку выше.</span>';}
 async function ckBanks(files){CKB=[];for(const f of files){const r=Core.parseTBank(Core.decode(await f.arrayBuffer()));if(r.ops.length)CKB.push({name:f.name,ops:r.ops});}
