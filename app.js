@@ -227,7 +227,7 @@ function renderOp(){const cls=E.type==='expense'?'neg':E.type==='income'?'pos':'
   openSheet(`<div class="oph"><button onclick="closeSheet()">✕</button><b>${E.id?'Операция':'Новая операция'}</b>${E.id?`<span><button onclick="moveOpUI(-1)" title="Выше">↑</button><button onclick="moveOpUI(1)" title="Ниже">↓</button></span>`:'<span></span>'}</div>
   <div class="seg">${[['expense','Расход'],['income','Доход'],['transfer','Перевод']].map(([k,n])=>`<button class="${E.type===k?'on':''}" onclick="opType('${k}')">${n}</button>`).join('')}</div>
   <div class="opcards">${E.type==='income'?opCard('cat')+'<span>→</span>'+opCard('acc'):E.type==='transfer'?opCard('acc')+'<span>→</span>'+opCard('acc','to'):opCard('acc')+'<span>→</span>'+opCard('cat')}</div>
-  <div class="opamt ${cls}"><input id="op_amt" inputmode="decimal" placeholder="0" value="${esc(E.amount)}" oninput="E.amount=this.value.replace('.',',').replace(/[^\d,]/g,'')"><span>₽</span></div>
+  <div class="opamt ${cls}"><input id="op_amt" inputmode="decimal" placeholder="0" value="${esc(E.amount)}" oninput="opAmt(this.value)"><span>₽</span></div>
   <div class="opdates"><div id="op_dates">${opDateStrip()}</div><label class="opcal">📅<input type="date" value="${E.date.slice(0,10)}" onchange="opSetDate(this.value)"></label></div>
   <input class="opnote" placeholder="Описание / получатель" value="${esc(E.note||'')}" oninput="E.note=this.value">
   <textarea class="opcom" rows="2" placeholder="Напишите комментарий" oninput="E.comment=this.value">${esc(E.comment||'')}</textarea>
@@ -242,7 +242,9 @@ async function moveOpUI(dir){const list=(LASTLIST.some(o=>o.id===E.id)?LASTLIST:
   for(const o of ch){const cur=S.ops.find(x=>x.id===o.id);Object.assign(cur,{date:o.date});await put('ops',{...cur});if(o.id===E.id)E.date=o.date;}
   S.ops=await all('ops');LASTEDIT=E.id;keepPlace(refreshView);toast(dir<0?'Поднято':'Опущено');}
 function key(k){let a=E.amount||'';if(k==='⌫')a=a.slice(0,-1);else if(k===','){if(!a.includes(','))a=(a||'0')+',';}else if(!/,\d\d$/.test(a))a=a==='0'?k:a+k;E.amount=a;$('#disp').textContent=(a||'0')+' ₽';}
-async function saveOp(){const a=parseFloat(String(E.amount).replace(',','.'));if(!(a>0))return toast('Введите сумму');
+// v49: the old inline handler lived inside a template string, so its /[^\d,]/ lost the backslash and became /[^d,]/ — every digit was stripped
+function opAmt(v){E.amount=String(v||'');}
+async function saveOp(){const inp=$('#op_amt');if(inp)E.amount=inp.value;const a=Core.parseAmount(E.amount);if(!(a>0))return toast('Введите сумму');
   if(E.type==='transfer'&&(!E.toAccountId||!E.accountId))return toast('Выберите оба счёта');
   if(E.type==='transfer'&&E.accountId===E.toAccountId)return toast('Счета должны различаться');
   const old=S.ops.find(o=>o.id===E.id)||{};
@@ -524,7 +526,7 @@ function ssToReview(){const rows=ssRows.filter(r=>r.amount&&r.date).map(r=>({...
 // ---- CoinKeeper import ----
 let CK=null;
 const ckSkipped=()=>JSON.parse(localStorage.ckSkipped||'[]');
-const APP_VER='v48';
+const APP_VER='v49';
 let CKB=[];try{CKB=JSON.parse(localStorage.ckBanks||'[]');}catch(e){CKB=[];}
 function ckbStatus(){const el=$('#ckb');if(!el)return;el.innerHTML=CKB.length?'✅ Выписки загружены: '+CKB.map(b=>esc((b.accountId?accName(b.accountId):b.name)+' ('+b.ops.length+' операций)')).join(', ')+' <button class="b s" onclick="CKB=[];localStorage.removeItem(\'ckBanks\');ckbStatus();if(CK){CK=Core.planCoinKeeper(CK.items.map(i=>i.row),{accounts:S.accounts,cats:S.cats,ops:S.ops,skipped:ckSkipped()});CK.items.forEach(i=>{i.accept=i.action===\'add\'||i.action===\'link\'});renderCK();}">Сбросить</button>':'<span class="neg">⚠️ Выписки не загружены — подсказок банка не будет. Сначала нажмите кнопку выше.</span>';}
 async function ckBanks(files){CKB=[];for(const f of files){const r=Core.parseTBank(Core.decode(await f.arrayBuffer()));if(r.ops.length)CKB.push({name:f.name,ops:r.ops});}

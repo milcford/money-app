@@ -420,7 +420,10 @@ function parseYandexText(lines){const D=/(\d{2})\.(\d{2})\.(\d{4})/,AM=/([+\-−
 function needsInReview(o,ids){if(o.deleted||o.review===0)return false;const bank=(o.bankIds||[]).some(b=>!String(b).startsWith('ck:'));
   if(o.type==='transfer')return ids.includes(o.toAccountId)&&!ids.includes(o.accountId)&&bank;
   if(o.type==='income')return ids.includes(o.accountId)&&!o.category;return false;}
-root.Core={parseSplitText,mergeSplitShots,SPLIT,SPLIT_PAY,findDupTransfer,PERSON,p2pMislink,splitP2P,needsInReview,parseJetlendMain,planJetlendSnap,JL,jlDate,parseJetlend,planJetlend,moveOp,opCmp,shotTimes,cleanYandexDesc,parseYandexText,ownToTransfer,OWN,INB,suggestCoinKeeper,guessBankAccount,bankKind,parseCoinKeeper,planCoinKeeper,decideOp,parseScreenshotText,screenshotIds,similar,decode,parseTBank,reconcile,balances,hash,isCash};
+// manual amount entry: «13000», «13 000», «1 234,56», «1234.56», «13 000 ₽» -> number (NaN if none)
+function parseAmount(s){let t=String(s==null?'':s).replace(/[\s\u00a0\u202f']/g,'').replace(/(₽|руб\.?|р\.?)$/i,'').replace(/[−–—]/g,'-');
+  if(/,/.test(t)&&/\./.test(t))t=t.replace(/\./g,'');t=t.replace(',','.');if(!/^-?\d*\.?\d+$|^-?\d+\.$/.test(t))return NaN;return Math.abs(parseFloat(t));}
+root.Core={parseAmount,parseSplitText,mergeSplitShots,SPLIT,SPLIT_PAY,findDupTransfer,PERSON,p2pMislink,splitP2P,needsInReview,parseJetlendMain,planJetlendSnap,JL,jlDate,parseJetlend,planJetlend,moveOp,opCmp,shotTimes,cleanYandexDesc,parseYandexText,ownToTransfer,OWN,INB,suggestCoinKeeper,guessBankAccount,bankKind,parseCoinKeeper,planCoinKeeper,decideOp,parseScreenshotText,screenshotIds,similar,decode,parseTBank,reconcile,balances,hash,isCash};
 if(typeof module!=='undefined')module.exports=root.Core;
 })(typeof self!=='undefined'?self:globalThis);
 
