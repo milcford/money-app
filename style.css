@@ -52,3 +52,16 @@ input,select,.b{font-size:17px;padding:10px;border-radius:10px;border:1px solid 
 
 .c,.c *{-webkit-touch-callout:none;-webkit-user-select:none;user-select:none}
 #sync.off{color:#f5a623!important;font-weight:600}
+.oph{display:flex;align-items:center;justify-content:space-between;margin:-4px 0 8px}.oph b{font-size:17px}.oph button{background:#2c2c2e;border:0;color:#fff;border-radius:50%;width:32px;height:32px;font-size:16px;margin-left:4px}.oph>span{min-width:32px;display:flex}
+.opcards{display:flex;align-items:stretch;gap:6px;margin:8px 0}.opcards>span{align-self:center;color:#8e8e93}
+.opc{flex:1;min-width:0;position:relative;background:#2c2c2e;border-radius:12px;padding:8px 10px;display:flex;flex-direction:column;gap:2px}.opc small{color:#8e8e93;font-size:11px}.opc b{font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.opc select{position:absolute;inset:0;opacity:0;margin:0;width:100%;height:100%}
+.opamt{display:flex;align-items:center;background:#2c2c2e;border-radius:12px;padding:0 12px;margin:6px 0}.opamt input{border:0;background:none;font-size:26px;font-weight:600;padding:8px 0;margin:0;color:inherit;text-align:right}.opamt span{font-size:22px;margin-left:6px}
+.opamt.neg input{color:#ff6b6b}.opamt.pos input{color:#5fd68a}
+.opdates{display:flex;gap:6px;align-items:stretch;margin:6px 0}#op_dates{flex:1;display:flex;gap:6px;overflow-x:auto;scrollbar-width:none}#op_dates::-webkit-scrollbar{display:none}
+#op_dates button{flex:0 0 52px;border:0;border-radius:10px;background:#2c2c2e;color:#fff;font-size:17px;padding:4px 0;display:flex;flex-direction:column;align-items:center;line-height:1.15}#op_dates button small{font-size:10px;color:#9ab}#op_dates button.on{background:#3d63dd}#op_dates button.on small{color:#dde}
+.opcal{flex:0 0 44px;position:relative;background:#2c2c2e;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:20px}.opcal input{position:absolute;inset:0;opacity:0;margin:0;padding:0}
+.opnote{font-size:14px!important;padding:8px 10px!important}
+.opcom{width:100%;font:15px inherit;font-family:inherit;padding:8px 10px;border-radius:10px;border:1px solid #3a3a3c;background:#2c2c2e;color:#fff;margin:4px 0;resize:none}
+.opbtns{display:flex;gap:8px;margin-top:6px}.opbtns .b{margin:0}.opbtns .b.r{flex:0 0 auto;width:auto;padding:10px 14px}
+.hrow .com{font-size:12px}

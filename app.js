@@ -54,7 +54,7 @@ async function api(path,body,tok){const r=await fetch(syncUrl()+path,{method:'PO
 async function runSync(){if(!db)return;countDirty();if(!syncUrl()||!localStorage.syncToken)return setSync('');if(navigator.onLine===false)return setSync('');if(syncing){syncAgain=true;return;}syncing=true;setSync('⟳ синхронизация…');
   try{const r=await Sync.syncOnce({db:{raw,put:putRaw},cursor:+localStorage.syncCursor||0,request:b=>api('/api/sync',b,localStorage.syncToken)});
     localStorage.syncCursor=r.cursor;localStorage.syncAt=Date.now();setSync('');if(r.applied){await cleanYandex();await ensureJetlend();await refresh();}}
-  catch(e){setSync(navigator.onLine===false?'офлайн':'⚠ '+e.message);}
+  catch(e){setSync(navigator.onLine===false||e instanceof TypeError||/load failed|failed to fetch|networkerror/i.test(e.message)?'⚠ офлайн':'⚠ '+e.message);}
   syncing=false;await countDirty();if(syncAgain){syncAgain=false;runSync();}}
 setInterval(runSync,60000);addEventListener('online',runSync);addEventListener('offline',()=>setSync(''));addEventListener('pageshow',runSync);document.addEventListener('visibilitychange',()=>{if(!document.hidden)runSync();});
 function syncSheet(){openSheet(`<b>Синхронизация между устройствами</b><p class="mut">Данные хранятся на телефоне и работают без интернета; при наличии сети изменения отправляются на ваш сервер.</p>
@@ -165,7 +165,7 @@ function opIcon(o){if(o.type==='transfer'){const a=S.accounts.find(x=>x.id===o.t
 function hrow(o){const[ic,col]=opIcon(o);const t=o.type==='transfer'?`${accName(o.accountId)} → ${accName(o.toAccountId)}`:o.category||'Без категории';
   const sub=o.type==='transfer'?'Перевод':o.type==='income'?`→ ${accName(o.accountId)}`:accName(o.accountId);
   return `<div class="hrow ${o.reviewed===false?'new':''}" onclick="editOp('${o.id}')"><div class="mini" style="background:${col}">${esc(ic)}</div>
-  <div class="t"><div>${esc(t)}</div><div class="mut">${esc(sub)}${o.note?' · '+esc(o.note):''} ${(o.bankIds||[]).some(b=>!String(b).startsWith('ck:'))?'<span class="tag">банк</span>':''}</div></div>
+  <div class="t"><div>${esc(t)}</div><div class="mut">${esc(sub)}${o.note?' · '+esc(o.note):''} ${(o.bankIds||[]).some(b=>!String(b).startsWith('ck:'))?'<span class="tag">банк</span>':''}</div>${o.comment?`<div class="mut com">💬 ${esc(o.comment)}</div>`:''}</div>
   <b class="${o.type==='expense'?'neg':o.type==='income'?'pos':''}">${o.type==='expense'?'−':o.type==='income'?'+':''}${fmt(o.amount)}</b></div>`;}
 async function markAll(){for(const o of S.ops)if(o.reviewed===false){o.reviewed=true;await put('ops',o);}refresh();}
 function menu(){openSheet(`<b>Меню</b><button class="b s" onclick="closeSheet();show('recon')">Сверить остатки</button><button class="b s" onclick="closeSheet();editCirc('acc')">+ Добавить счёт</button>${S.accounts.some(a=>a.archived)?`<div class="mut">Архив: ${S.accounts.filter(a=>a.archived).map(a=>`<a href="#" onclick="closeSheet();editCirc('acc','${a.id}');return false">${esc(a.name)}</a>`).join(', ')}</div>`:''}<button class="b s" onclick="closeSheet();show('import')">Импорт CSV / скриншоты</button>
@@ -173,18 +173,29 @@ function menu(){openSheet(`<b>Меню</b><button class="b s" onclick="closeShee
   <button class="b s" onclick="syncSheet()">☁ Синхронизация</button><button class="b s" onclick="closeSheet();renameProfile()">Название профиля</button><button class="b s" onclick="closeSheet()">Закрыть</button>`);}
 // ---- operation sheet with numpad ----
 let E=null;
-function opSheet(o){E={type:'expense',amount:'',accountId:S.accounts[0].id,toAccountId:(S.accounts[1]||S.accounts[0]).id,category:'',date:today(),note:'',...o};
+function opSheet(o){E={type:'expense',amount:'',accountId:S.accounts[0].id,toAccountId:(S.accounts[1]||S.accounts[0]).id,category:'',date:today(),note:'',comment:'',...o};
   if(E.amount!==''&&typeof E.amount==='number')E.amount=String(E.amount).replace('.',',');
   if(!E.category){const c=S.cats.find(c=>c.income===(E.type==='income'));E.category=c?c.name:'';}renderOp();}
-function renderOp(){const cats=S.cats.filter(c=>c.income===(E.type==='income'));
-  openSheet(`<div class="seg">${[['expense','Расход'],['income','Доход'],['transfer','Перевод']].map(([k,n])=>`<button class="${E.type===k?'on':''}" onclick="E.type='${k}';E.category='';opSheet(E)">${n}</button>`).join('')}</div>
-  <div class="flow" style="margin-top:8px">${E.type==='income'?`<select onchange="E.category=this.value">${cats.map(c=>`<option ${c.name===E.category?'selected':''}>${esc(c.name)}</option>`).join('')}</select> → <select onchange="E.accountId=this.value">${accOpts(E.accountId)}</select>`:
-   E.type==='transfer'?`<select onchange="E.accountId=this.value">${accOpts(E.accountId)}</select> → <select onchange="E.toAccountId=this.value">${accOpts(E.toAccountId)}</select>`:
-   `<select onchange="E.accountId=this.value">${accOpts(E.accountId)}</select> → <select onchange="E.category=this.value">${cats.map(c=>`<option ${c.name===E.category?'selected':''}>${esc(c.icon||'')} ${esc(c.name)}</option>`).join('')}</select>`}</div>
-  <div class="disp ${E.type==='expense'?'neg':E.type==='income'?'pos':''}" id="disp">${esc(E.amount||'0')} ₽</div>
-  <div class="pad">${['1','2','3','4','5','6','7','8','9',',','0','⌫'].map(k=>`<button onclick="key('${k}')">${k}</button>`).join('')}</div>
-  <div class="flow"><input type="date" value="${E.date.slice(0,10)}" onchange="E.date=this.value+(E.date.length>10?E.date.slice(10):'')" style="flex:1"><input placeholder="Комментарий" value="${esc(E.note)}" oninput="E.note=this.value" style="flex:1.4"></div>
-  ${E.id?`<div class="flow"><button class="b s" onclick="moveOpUI(-1)">↑ Выше</button><button class="b s" onclick="moveOpUI(1)">↓ Ниже</button></div>`:''}<button class="b" onclick="saveOp()">${E.id?'Сохранить':'Готово'}</button>${E.id?`<button class="b r" onclick="delOp('${E.id}')">Удалить</button>`:''}`);}
+function opDateStrip(){const sel=E.date.slice(0,10),base=new Date(sel+'T12:00:00'),out=[];const td=today().slice(0,10);
+  for(let i=-4;i<=2;i++){const d=new Date(base);d.setDate(d.getDate()+i);const iso=d.toISOString().slice(0,10);
+    out.push(`<button class="${iso===sel?'on':''}" onclick="opSetDate('${iso}')"><small>${iso===td?'сегодня':d.toLocaleDateString('ru-RU',{weekday:'short'})}</small>${d.getDate()}<small>${d.toLocaleDateString('ru-RU',{month:'short'}).replace('.','')}</small></button>`);}
+  return out.join('');}
+function opSetDate(iso){if(!iso)return;E.date=iso+(E.date.length>10?E.date.slice(10):'');$('#op_dates').innerHTML=opDateStrip();const c=$('#op_dates .on');if(c)c.scrollIntoView({inline:'center',block:'nearest'});}
+function opCard(kind,label){const b=Core.balances(S.accounts,S.ops);const cats=S.cats.filter(c=>c.income===(E.type==='income'));
+  if(kind==='acc'){const f=label==='to'?'toAccountId':'accountId';const a=S.accounts.find(x=>x.id===E[f])||{};
+    return `<label class="opc"><small>${label==='to'?'На счёт':'Со счёта'}</small><b>${esc(a.icon||'💳')} ${esc(a.name||'')}</b><small>${fmt(b[a.id]||0)}</small><select onchange="E.${f}=this.value;renderOp()">${accOpts(E[f])}</select></label>`;}
+  const c=cats.find(x=>x.name===E.category)||{};
+  return `<label class="opc"><small>${E.type==='income'?'Источник':'Категория'}</small><b>${esc(c.icon||'•')} ${esc(E.category||'—')}</b><small>&nbsp;</small><select onchange="E.category=this.value;renderOp()">${cats.map(x=>`<option value="${esc(x.name)}" ${x.name===E.category?'selected':''}>${esc(x.icon||'')} ${esc(x.name)}</option>`).join('')}</select></label>`;}
+function renderOp(){const cls=E.type==='expense'?'neg':E.type==='income'?'pos':'';
+  openSheet(`<div class="oph"><button onclick="closeSheet()">✕</button><b>${E.id?'Операция':'Новая операция'}</b>${E.id?`<span><button onclick="moveOpUI(-1)" title="Выше">↑</button><button onclick="moveOpUI(1)" title="Ниже">↓</button></span>`:'<span></span>'}</div>
+  <div class="seg">${[['expense','Расход'],['income','Доход'],['transfer','Перевод']].map(([k,n])=>`<button class="${E.type===k?'on':''}" onclick="E.type='${k}';E.category='';opSheet(E)">${n}</button>`).join('')}</div>
+  <div class="opcards">${E.type==='income'?opCard('cat')+'<span>→</span>'+opCard('acc'):E.type==='transfer'?opCard('acc')+'<span>→</span>'+opCard('acc','to'):opCard('acc')+'<span>→</span>'+opCard('cat')}</div>
+  <div class="opamt ${cls}"><input id="op_amt" inputmode="decimal" placeholder="0" value="${esc(E.amount)}" oninput="E.amount=this.value.replace('.',',').replace(/[^\d,]/g,'')"><span>₽</span></div>
+  <div class="opdates"><div id="op_dates">${opDateStrip()}</div><label class="opcal">📅<input type="date" value="${E.date.slice(0,10)}" onchange="opSetDate(this.value)"></label></div>
+  <input class="opnote" placeholder="Описание / получатель" value="${esc(E.note||'')}" oninput="E.note=this.value">
+  <textarea class="opcom" rows="2" placeholder="Напишите комментарий" oninput="E.comment=this.value">${esc(E.comment||'')}</textarea>
+  <div class="opbtns">${E.id?`<button class="b r" onclick="delOp('${E.id}')">Удалить</button>`:''}<button class="b" onclick="saveOp()">${E.id?'Сохранить':'Готово'}</button></div>`);
+  const c=$('#op_dates .on');if(c)c.scrollIntoView({inline:'center',block:'nearest'});if(!E.id)setTimeout(()=>{const i=$('#op_amt');if(i)i.focus();},250);}
 async function moveOpUI(dir){const list=(LASTLIST.some(o=>o.id===E.id)?LASTLIST:S.ops).map(o=>S.ops.find(x=>x.id===o.id)||o);
   const ch=Core.moveOp(list,E.id,dir);if(!ch.length)return toast(dir<0?'Уже первая за день':'Уже последняя за день');
   for(const o of ch){const cur=S.ops.find(x=>x.id===o.id);Object.assign(cur,{date:o.date});await put('ops',{...cur});if(o.id===E.id)E.date=o.date;}
@@ -193,7 +204,7 @@ function key(k){let a=E.amount||'';if(k==='⌫')a=a.slice(0,-1);else if(k===',')
 async function saveOp(){const a=parseFloat(String(E.amount).replace(',','.'));if(!(a>0))return toast('Введите сумму');
   if(E.type==='transfer'&&E.accountId===E.toAccountId)return toast('Счета должны различаться');
   const old=S.ops.find(o=>o.id===E.id)||{};
-  const o={...old,id:E.id||uid(),type:E.type,amount:a,accountId:E.accountId,toAccountId:E.type==='transfer'?E.toAccountId:undefined,date:E.date,category:E.type==='transfer'?'':E.category,note:E.note,bankIds:old.bankIds||[],reviewed:true};
+  const o={...old,id:E.id||uid(),type:E.type,amount:a,accountId:E.accountId,toAccountId:E.type==='transfer'?E.toAccountId:undefined,date:E.date,category:E.type==='transfer'?'':E.category,note:E.note,comment:(E.comment||'').trim()||undefined,bankIds:old.bankIds||[],reviewed:true};
   await put('ops',o);closeSheet();refresh();toast('Сохранено');}
 async function delOp(id){if(!confirm('Удалить операцию?'))return;await del('ops',id);closeSheet();refresh();}
 async function editOp(id){const o=S.ops.find(x=>x.id===id);if(o.reviewed===false){o.reviewed=true;await put('ops',o);header();}opSheet({...o});}
@@ -436,7 +447,7 @@ function ssToReview(){const rows=ssRows.filter(r=>r.amount&&r.date).map(r=>({...
 // ---- CoinKeeper import ----
 let CK=null;
 const ckSkipped=()=>JSON.parse(localStorage.ckSkipped||'[]');
-const APP_VER='v37';
+const APP_VER='v38';
 let CKB=[];try{CKB=JSON.parse(localStorage.ckBanks||'[]');}catch(e){CKB=[];}
 function ckbStatus(){const el=$('#ckb');if(!el)return;el.innerHTML=CKB.length?'✅ Выписки загружены: '+CKB.map(b=>esc((b.accountId?accName(b.accountId):b.name)+' ('+b.ops.length+' операций)')).join(', ')+' <button class="b s" onclick="CKB=[];localStorage.removeItem(\'ckBanks\');ckbStatus();if(CK){CK=Core.planCoinKeeper(CK.items.map(i=>i.row),{accounts:S.accounts,cats:S.cats,ops:S.ops,skipped:ckSkipped()});CK.items.forEach(i=>{i.accept=i.action===\'add\'||i.action===\'link\'});renderCK();}">Сбросить</button>':'<span class="neg">⚠️ Выписки не загружены — подсказок банка не будет. Сначала нажмите кнопку выше.</span>';}
 async function ckBanks(files){CKB=[];for(const f of files){const r=Core.parseTBank(Core.decode(await f.arrayBuffer()));if(r.ops.length)CKB.push({name:f.name,ops:r.ops});}
