@@ -35,7 +35,7 @@ async function load(){
     for(const[n,ic]of[['Доход','💵'],['Аня','🛒'],['ЗП','🛒'],['Прочее','🛒']])await seed('cats',{id:'inc_'+j++,name:n,income:true,icon:ic,color:COLORS.inc,order:i++});j=0;
     for(const[n,ic]of[['Продукты','🧃'],['Развлечения','🎞️'],['Транспорт','🚌'],['Еда вне дома','🥤'],['Покупки','🛍️'],['Прочее','🛒'],['Пивной','🍺'],['Кальян','💨'],['Ремонт','🏠'],['на чай','🪙'],['Валенсия','✈️'],['парикмахерская','💇']])
       await seed('cats',{id:'exp_'+j++,name:n,income:false,icon:ic,color:COLORS.exp,order:i++});}
-  await ensureBlacks();await cleanYandex();await ensureJetlend();await migIncomeIn();await migP2P();await migTrInc();
+  await ensureBlacks();await cleanYandex();await ensureJetlend();await migIncomeIn();await migP2P();await migTrInc();await migTrInc3();
   for(const st of ['accounts','ops','cats'])S[st]=await all(st);S.accounts.sort(byOrder);S.cats.sort(byOrder);}
 // ---- sync ----
 let syncing=false,syncAgain=false,syncTimer=null,syncMsg='';
@@ -109,6 +109,9 @@ async function migTrInc(){const cats=await raw('cats');if(!cats.some(c=>c.income
   for(const a of await raw('accounts'))if(!a.deleted&&a.inCat===undefined&&(a.id==='mama_black'||a.id==='anya_black'||a.bank==='yandex'||/яндекс|сбер/i.test(a.name))){a.incomeIn=true;a.inCat=TR_INC;await put('accounts',a);}
   const ids=(await raw('accounts')).filter(a=>a.incomeIn&&!a.deleted).map(a=>a.id);
   for(const o of await raw('ops'))if(!o.review&&Core.needsInReview(o,ids)){o.review=1;await put('ops',o);}localStorage.migTrInc=1;}
+// v46: user-approved one-time move of 3 «Доход» ops on mama_black to «Доход с переводов»
+const TRINC3=['mvy61wzrwtrzy_in','mvy61x3roviqi_in','mvy7dhozf7a11'];
+async function migTrInc3(){if(localStorage.migTrInc3)return;for(const o of await raw('ops'))if(TRINC3.includes(o.id)&&!o.deleted&&o.accountId==='mama_black'&&o.type==='income'&&o.category==='Доход'){o.category=TR_INC;await put('ops',o);}localStorage.migTrInc3=1;}
 // v41: «Эдвард О.»-style payments wrongly linked as transfer (INB matched any same-amount expense); split into sender expense + receiver income for review
 const P2P_FIX={mvy61wzrwtrzy:'anya_t',mvy61x3roviqi:'anya_t'}; // already resolved to income on the receiver by v40; sender from statement
 async function migP2P(){if(localStorage.migP2P)return;let n=0;
@@ -514,7 +517,7 @@ function ssToReview(){const rows=ssRows.filter(r=>r.amount&&r.date).map(r=>({...
 // ---- CoinKeeper import ----
 let CK=null;
 const ckSkipped=()=>JSON.parse(localStorage.ckSkipped||'[]');
-const APP_VER='v45';
+const APP_VER='v46';
 let CKB=[];try{CKB=JSON.parse(localStorage.ckBanks||'[]');}catch(e){CKB=[];}
 function ckbStatus(){const el=$('#ckb');if(!el)return;el.innerHTML=CKB.length?'✅ Выписки загружены: '+CKB.map(b=>esc((b.accountId?accName(b.accountId):b.name)+' ('+b.ops.length+' операций)')).join(', ')+' <button class="b s" onclick="CKB=[];localStorage.removeItem(\'ckBanks\');ckbStatus();if(CK){CK=Core.planCoinKeeper(CK.items.map(i=>i.row),{accounts:S.accounts,cats:S.cats,ops:S.ops,skipped:ckSkipped()});CK.items.forEach(i=>{i.accept=i.action===\'add\'||i.action===\'link\'});renderCK();}">Сбросить</button>':'<span class="neg">⚠️ Выписки не загружены — подсказок банка не будет. Сначала нажмите кнопку выше.</span>';}
 async function ckBanks(files){CKB=[];for(const f of files){const r=Core.parseTBank(Core.decode(await f.arrayBuffer()));if(r.ops.length)CKB.push({name:f.name,ops:r.ops});}
