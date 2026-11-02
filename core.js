@@ -209,6 +209,8 @@ const days=(a,b)=>Math.abs(new Date(a)-new Date(b))/864e5;
 // Classify imported ops against existing operations.
 // existing: [{id,type,amount(positive),accountId,toAccountId,date,bankIds:[]}], cardAccountId, cashAccountId
 const OWN=/между своими счетами/i;
+// internal bank transfer whose other side is not named (T-Bank «Внутрибанковский перевод», «Внутренний перевод», «Перевод между счетами»); OCR may cut the tail
+const INB=/внутрибанков|внутренн\S* перев|перевод между (своими )?сч/i;
 function reconcile(imported, existing, cardAcc, cashAcc, ownAcc, pairAcc, others){
   const known=new Set(); existing.forEach(o=>(o.bankIds||[]).forEach(b=>known.add(b)));
   const used=new Set(); const out=[];
@@ -242,6 +244,11 @@ function reconcile(imported, existing, cardAcc, cashAcc, ownAcc, pairAcc, others
     if(others&&others.length&&/(t-?bank|т-?банк|тинькофф|card2card|себе (в|из) друг)/i.test(op.desc||'')){const want=dir==='in'?'expense':'income';
       const cs=existing.filter(o=>!used.has(o.id)&&o.type===want&&others.includes(o.accountId)&&o.accountId!==cardAcc&&(want!=='income'||/(t-?bank|т-?банк|тинькофф|card2card)/i.test(o.note||''))&&Math.abs(o.amount-abs)<0.005&&days(o.date.slice(0,10),op.date.slice(0,10))<=1);
       if(cs.length===1){used.add(cs[0].id);out.push({op,action:'convert',target:cs[0].id,from:dir==='in'?cs[0].accountId:cardAcc,to:dir==='in'?cardAcc:cs[0].accountId});continue;}}
+    if(INB.test(op.desc||'')){const want=dir==='in'?'expense':'income';
+      const cs=existing.filter(o=>!used.has(o.id)&&o.type===want&&o.accountId!==cardAcc&&Math.abs(o.amount-abs)<0.005&&days(o.date.slice(0,10),op.date.slice(0,10))<=1)
+        .sort((a,b)=>(INB.test(b.note||'')||OWN.test(b.note||''))-(INB.test(a.note||'')||OWN.test(a.note||''))||days(a.date,op.date)-days(b.date,op.date));
+      if(cs.length){used.add(cs[0].id);out.push({op,action:'convert',target:cs[0].id,from:dir==='in'?cs[0].accountId:cardAcc,to:dir==='in'?cardAcc:cs[0].accountId});continue;}
+      out.push({op,action:'transfer',from:dir==='in'?null:cardAcc,to:dir==='in'?cardAcc:null,pick:true});continue;}
     const c=isCash(op);
     if(c==='in') out.push({op,action:'transfer',from:cashAcc,to:cardAcc});
     else if(c==='out') out.push({op,action:'transfer',from:cardAcc,to:cashAcc});
@@ -347,6 +354,6 @@ function parseYandexText(lines){const D=/(\d{2})\.(\d{2})\.(\d{4})/,AM=/([+\-−
     const t=l.match(/^в (\d{2}):(\d{2})$/);if(t){cur.date=cur.date.slice(0,11)+t[1]+':'+t[2]+':00';continue;}
     cur.desc+=' '+l;}
   flush();return {ops,skipped:0,errors:ops.length?[]:['Не удалось найти операции в выписке Яндекс Банка'],closing,totIn,totOut};}
-root.Core={parseJetlendMain,planJetlendSnap,JL,jlDate,parseJetlend,planJetlend,moveOp,opCmp,shotTimes,cleanYandexDesc,parseYandexText,ownToTransfer,OWN,suggestCoinKeeper,guessBankAccount,bankKind,parseCoinKeeper,planCoinKeeper,decideOp,parseScreenshotText,screenshotIds,similar,decode,parseTBank,reconcile,balances,hash,isCash};
+root.Core={parseJetlendMain,planJetlendSnap,JL,jlDate,parseJetlend,planJetlend,moveOp,opCmp,shotTimes,cleanYandexDesc,parseYandexText,ownToTransfer,OWN,INB,suggestCoinKeeper,guessBankAccount,bankKind,parseCoinKeeper,planCoinKeeper,decideOp,parseScreenshotText,screenshotIds,similar,decode,parseTBank,reconcile,balances,hash,isCash};
 if(typeof module!=='undefined')module.exports=root.Core;
 })(typeof self!=='undefined'?self:globalThis);

@@ -188,7 +188,7 @@ function opCard(kind,label){const b=Core.balances(S.accounts,S.ops);const cats=S
   return `<label class="opc"><small>${E.type==='income'?'Источник':'Категория'}</small><b>${esc(c.icon||'•')} ${esc(E.category||'—')}</b><small>&nbsp;</small><select onchange="E.category=this.value;renderOp()">${cats.map(x=>`<option value="${esc(x.name)}" ${x.name===E.category?'selected':''}>${esc(x.icon||'')} ${esc(x.name)}</option>`).join('')}</select></label>`;}
 function renderOp(){const cls=E.type==='expense'?'neg':E.type==='income'?'pos':'';
   openSheet(`<div class="oph"><button onclick="closeSheet()">✕</button><b>${E.id?'Операция':'Новая операция'}</b>${E.id?`<span><button onclick="moveOpUI(-1)" title="Выше">↑</button><button onclick="moveOpUI(1)" title="Ниже">↓</button></span>`:'<span></span>'}</div>
-  <div class="seg">${[['expense','Расход'],['income','Доход'],['transfer','Перевод']].map(([k,n])=>`<button class="${E.type===k?'on':''}" onclick="E.type='${k}';E.category='';opSheet(E)">${n}</button>`).join('')}</div>
+  <div class="seg">${[['expense','Расход'],['income','Доход'],['transfer','Перевод']].map(([k,n])=>`<button class="${E.type===k?'on':''}" onclick="opType('${k}')">${n}</button>`).join('')}</div>
   <div class="opcards">${E.type==='income'?opCard('cat')+'<span>→</span>'+opCard('acc'):E.type==='transfer'?opCard('acc')+'<span>→</span>'+opCard('acc','to'):opCard('acc')+'<span>→</span>'+opCard('cat')}</div>
   <div class="opamt ${cls}"><input id="op_amt" inputmode="decimal" placeholder="0" value="${esc(E.amount)}" oninput="E.amount=this.value.replace('.',',').replace(/[^\d,]/g,'')"><span>₽</span></div>
   <div class="opdates"><div id="op_dates">${opDateStrip()}</div><label class="opcal">📅<input type="date" value="${E.date.slice(0,10)}" onchange="opSetDate(this.value)"></label></div>
@@ -196,12 +196,17 @@ function renderOp(){const cls=E.type==='expense'?'neg':E.type==='income'?'pos':'
   <textarea class="opcom" rows="2" placeholder="Напишите комментарий" oninput="E.comment=this.value">${esc(E.comment||'')}</textarea>
   <div class="opbtns">${E.id?`<button class="b r" onclick="delOp('${E.id}')">Удалить</button>`:''}<button class="b" onclick="saveOp()">${E.id?'Сохранить':'Готово'}</button></div>`);
   const c=$('#op_dates .on');if(c)c.scrollIntoView({inline:'center',block:'nearest'});if(!E.id)setTimeout(()=>{const i=$('#op_amt');if(i)i.focus();},250);}
+function opType(k){if(k===E.type)return;const other=id=>(S.accounts.find(a=>a.id!==id)||{}).id;
+  if(k==='transfer'){if(E.type==='income'){E.toAccountId=E.accountId;E.accountId=other(E.accountId);}else if(!E.toAccountId||E.toAccountId===E.accountId)E.toAccountId=other(E.accountId);}
+  else if(E.type==='transfer'&&k==='income')E.accountId=E.toAccountId||E.accountId;
+  E.type=k;E.category='';opSheet(E);}
 async function moveOpUI(dir){const list=(LASTLIST.some(o=>o.id===E.id)?LASTLIST:S.ops).map(o=>S.ops.find(x=>x.id===o.id)||o);
   const ch=Core.moveOp(list,E.id,dir);if(!ch.length)return toast(dir<0?'Уже первая за день':'Уже последняя за день');
   for(const o of ch){const cur=S.ops.find(x=>x.id===o.id);Object.assign(cur,{date:o.date});await put('ops',{...cur});if(o.id===E.id)E.date=o.date;}
   S.ops=await all('ops');refreshView();toast(dir<0?'Поднято':'Опущено');}
 function key(k){let a=E.amount||'';if(k==='⌫')a=a.slice(0,-1);else if(k===','){if(!a.includes(','))a=(a||'0')+',';}else if(!/,\d\d$/.test(a))a=a==='0'?k:a+k;E.amount=a;$('#disp').textContent=(a||'0')+' ₽';}
 async function saveOp(){const a=parseFloat(String(E.amount).replace(',','.'));if(!(a>0))return toast('Введите сумму');
+  if(E.type==='transfer'&&(!E.toAccountId||!E.accountId))return toast('Выберите оба счёта');
   if(E.type==='transfer'&&E.accountId===E.toAccountId)return toast('Счета должны различаться');
   const old=S.ops.find(o=>o.id===E.id)||{};
   const o={...old,id:E.id||uid(),type:E.type,amount:a,accountId:E.accountId,toAccountId:E.type==='transfer'?E.toAccountId:undefined,date:E.date,category:E.type==='transfer'?'':E.category,note:E.note,comment:(E.comment||'').trim()||undefined,bankIds:old.bankIds||[],reviewed:true};
@@ -347,18 +352,19 @@ let IMP={};
 function scrollEnd(){const e=$('#rv_end');if(e)e.scrollIntoView({behavior:'smooth',block:'end'});}
 function updApply(){const b=$('#rv_apply');if(!b)return;const n=[...document.querySelectorAll('#review input[type=checkbox]')].filter(x=>x.checked).length;b.textContent=`${b.dataset.lbl} (${n} операций)`;}
 document.addEventListener('change',e=>{if(e.target.closest&&e.target.closest('#review'))updApply();});
-function renderReview(skipped){const dup=pending.filter(p=>p.action==='duplicate').length;const L={convert:'Перевод между своими счетами: исправить запись на другом счёте (станет переводом)',link:'Связать с ручной записью',transfer:'Перевод наличные ⇄ карта',add:'Новая операция'};
+function renderReview(skipped){const dup=pending.filter(p=>p.action==='duplicate').length;const L={convert:'Перевод между своими счетами: исправить запись на другом счёте (станет переводом)',link:'Связать с ручной записью',transfer:'Перевод между счетами',add:'Новая операция'};
   $('#review').innerHTML=`<div class="card"><b>Проверка</b><div class="mut">Уже загружено ранее (пропущено): ${dup}. Отклонённых/неуспешных строк: ${skipped}.</div>${pending.some(p=>p.old)?`<div class="mut">Строки раньше начала истории счёта (${pending.filter(p=>p.old).length}) не отмечены: они уже учтены в начальном остатке.</div>`:''}</div>
   ${['convert','link','transfer','add'].map(k=>{const it=pending.map((p,i)=>[p,i]).filter(([p])=>p.action===k);if(!it.length)return'';
    return `<div class="card"><b>${L[k]} (${it.length})</b>${it.map(([p,i])=>{const t=p.target&&S.ops.find(o=>o.id===p.target);
-    return `<label class="row"><input type="checkbox" style="width:auto" ${p.accept?'checked':''} onchange="pending[${i}].accept=this.checked"><div style="flex:1"><div>${esc(p.op.desc)}</div><div class="mut">${p.op.date.slice(0,10)} · ${esc(p.op.bankCategory)}${t?`<br>↔ ваша запись: ${t.date.slice(0,10)} ${fmt(t.amount)} ${esc(t.category||t.note||'')}`:''}${k==='transfer'||k==='convert'?`<br>${esc(accName(p.from))} → ${esc(accName(p.to))}`:''}</div></div><b class="${p.op.amount<0?'neg':'pos'}">${fmt(p.op.amount)}</b></label>`;}).join('')}
-    ${k==='transfer'?'<div class="mut">Снимите галочку, если это не наличные — тогда будет добавлено как обычная операция.</div>':''}</div>`;}).join('')}
+    return `<label class="row"><input type="checkbox" style="width:auto" ${p.accept?'checked':''} onchange="pending[${i}].accept=this.checked"><div style="flex:1"><div>${esc(p.op.desc)}</div><div class="mut">${p.op.date.slice(0,10)} · ${esc(p.op.bankCategory)}${t?`<br>↔ ваша запись: ${t.date.slice(0,10)} ${fmt(t.amount)} ${esc(t.category||t.note||'')}`:''}${p.pick?`<br>${p.from?esc(accName(p.from))+' → ':''}<select style="width:auto;font-size:14px;padding:4px" onchange="pending[${i}][pending[${i}].from===pending[${i}].card?'to':'from']=this.value||null"><option value="">— выберите счёт —</option>${S.accounts.filter(a=>a.id!==p.card).map(a=>`<option value="${a.id}" ${(p.from===p.card?p.to:p.from)===a.id?'selected':''}>${esc(a.name)}</option>`).join('')}</select>${p.to===p.card?' → '+esc(accName(p.to)):''}`:k==='transfer'||k==='convert'?`<br>${esc(accName(p.from))} → ${esc(accName(p.to))}`:''}</div></div><b class="${p.op.amount<0?'neg':'pos'}">${fmt(p.op.amount)}</b></label>`;}).join('')}
+    ${k==='transfer'?'<div class="mut">Снимите галочку, если это не перевод — тогда будет добавлено как обычная операция. Если второй счёт не выбран, перевод сохранится как доход/расход с пометкой — потом поменяйте на «Перевод».</div>':''}</div>`;}).join('')}
   <div class="card"><b>Остаток на счёте</b><div class="mut">${IMP.closing!=null?'В выписке указан остаток — он подставлен.':'В выписке Т‑Банка остатка нет. Введите текущий остаток из приложения банка — баланс кошелька подгоним под него (необязательно).'}</div>
    ${(IMP.accs||[]).map(id=>`<label class="mut">${esc(accName(id))}, ₽</label><input type="number" step="0.01" inputmode="decimal" id="bal_${id}" value="${IMP.closing!=null&&IMP.accs.length===1?IMP.closing:''}">`).join('')}</div>
   <div id="rv_end"></div><div class="stick"><button class="b s" onclick="scrollEnd()">↓ Вниз</button><button class="b" id="rv_apply" data-lbl="Применить" onclick="applyImport()">Применить</button></div>`;setTimeout(updApply);}
 async function applyImport(){let n=0;const bals={};(IMP.accs||[]).forEach(id=>{const v=parseFloat((($('#bal_'+id)||{}).value||'').replace(',','.'));if(!isNaN(v))bals[id]=v;});
   for(const p of pending){const op=p.op;if(p.action==='duplicate')continue;
   if(p.action==='convert'){const t=S.ops.find(o=>o.id===p.target);if(p.accept){await put('ops',{...t,type:'transfer',category:'',accountId:p.from,toAccountId:p.to,bankIds:[...(t.bankIds||[]),op.bankId],sides:[t.accountId,p.card],note:t.note||op.desc});n++;continue;}}
+  if(p.action==='transfer'&&p.pick&&!(p.from&&p.to))p.accept=false;
   if(p.action==='transfer'&&p.accept)for(const x of [p.from,p.to]){const c=S.accounts.find(a=>a.id===x);if(!c){const card=S.accounts.find(a=>blackFor(a.id)&&blackFor(a.id).id===x);if(card)await ensureAcc(blackFor(card.id));}}
   if(p.action==='link'&&p.accept){const t=S.ops.find(o=>o.id===p.target);t.bankIds=[...(t.bankIds||[]),op.bankId];if(p.side)t.sides=[...(t.sides||[]),p.side];await put('ops',t);n++;continue;}
   let o={id:uid(),amount:Math.abs(op.amount),date:op.date,note:op.desc,bankIds:[op.bankId],reviewed:false};
@@ -447,7 +453,7 @@ function ssToReview(){const rows=ssRows.filter(r=>r.amount&&r.date).map(r=>({...
 // ---- CoinKeeper import ----
 let CK=null;
 const ckSkipped=()=>JSON.parse(localStorage.ckSkipped||'[]');
-const APP_VER='v38';
+const APP_VER='v39';
 let CKB=[];try{CKB=JSON.parse(localStorage.ckBanks||'[]');}catch(e){CKB=[];}
 function ckbStatus(){const el=$('#ckb');if(!el)return;el.innerHTML=CKB.length?'✅ Выписки загружены: '+CKB.map(b=>esc((b.accountId?accName(b.accountId):b.name)+' ('+b.ops.length+' операций)')).join(', ')+' <button class="b s" onclick="CKB=[];localStorage.removeItem(\'ckBanks\');ckbStatus();if(CK){CK=Core.planCoinKeeper(CK.items.map(i=>i.row),{accounts:S.accounts,cats:S.cats,ops:S.ops,skipped:ckSkipped()});CK.items.forEach(i=>{i.accept=i.action===\'add\'||i.action===\'link\'});renderCK();}">Сбросить</button>':'<span class="neg">⚠️ Выписки не загружены — подсказок банка не будет. Сначала нажмите кнопку выше.</span>';}
 async function ckBanks(files){CKB=[];for(const f of files){const r=Core.parseTBank(Core.decode(await f.arrayBuffer()));if(r.ops.length)CKB.push({name:f.name,ops:r.ops});}
